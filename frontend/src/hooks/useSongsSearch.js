@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-const FALLBACK_IMAGE_URL =
-  "https://images.unsplash.com/photo-1516280440614-37939bbacd81?auto=format&fit=crop&w=300&q=80";
-
 function mapSongItem(item) {
   return {
     id: `${item.Artist}-${item.SongTitle}`,
@@ -10,7 +7,7 @@ function mapSongItem(item) {
     artist: item.Artist || "-",
     album: item.Album || "-",
     year: item.Year || "-",
-    image: item.image_url || FALLBACK_IMAGE_URL
+    image: item.image_url || ""
   };
 }
 
