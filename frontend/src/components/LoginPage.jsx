@@ -15,7 +15,7 @@ export default function LoginPage({ onLoginSuccess, onSwitchToRegister }) {
     setError("");
 
     if (!canSubmit) {
-      setError("Please enter your email and password.");
+      setError("Email and password are required.");
       return;
     }
 
@@ -26,7 +26,7 @@ export default function LoginPage({ onLoginSuccess, onSwitchToRegister }) {
         password: password
       });
     } catch (err) {
-      setError(err?.message || "Login failed. Please try again.");
+      setError(err?.message || "Unable to log in. Please try again.");
     } finally {
       setIsSubmitting(false);
     }

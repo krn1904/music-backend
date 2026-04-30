@@ -27,7 +27,7 @@ function getAuthUser() {
 }
 
 function getRouteFromHash() {
-  const hash = window.location.hash || "#/";
+  const hash = window.location.hash || "#/login";
   const cleaned = hash.startsWith("#") ? hash.slice(1) : hash;
   if (cleaned === "/login") return "/login";
   if (cleaned === "/register") return "/register";
@@ -429,6 +429,12 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
+  useEffect(() => {
+    if (authUser && (route === "/login" || route === "/register")) {
+      window.location.hash = "/";
+    }
+  }, [authUser, route]);
+
   const navigate = (nextRoute) => {
     window.location.hash = nextRoute;
   };
@@ -436,7 +442,7 @@ export default function App() {
   const logout = () => {
     localStorage.removeItem(AUTH_USER_KEY);
     setAuthUser(null);
-    navigate("/");
+    navigate("/login");
   };
 
   const postJson = async (path, payload) => {
@@ -465,7 +471,7 @@ export default function App() {
     });
 
     const user = payload?.user;
-    if (!user?.email) throw new Error("Login failed. Please try again.");
+    if (!user?.email) throw new Error("Unable to log in. Please try again.");
 
     const sessionUser = { email: user.email, username: user.username || "" };
     localStorage.setItem(AUTH_USER_KEY, JSON.stringify(sessionUser));
@@ -482,17 +488,14 @@ export default function App() {
     });
 
     const user = payload?.user;
-    if (!user?.email) throw new Error("Register failed. Please try again.");
-
-    const sessionUser = { email: user.email, username: user.username || "" };
-    localStorage.setItem(AUTH_USER_KEY, JSON.stringify(sessionUser));
-    setAuthUser(sessionUser);
-    navigate("/");
+    if (!user?.email) throw new Error("Unable to create account. Please try again.");
+    // Assignment requirement: after successful registration, redirect to login page.
+    navigate("/login");
   };
 
   const userArea = (
     <div className="user-area">
-      {route !== "/" ? <a href="#/">Main Page</a> : null}
+      {authUser && route !== "/" ? <a href="#/">Main Page</a> : null}
 
       {authUser ? (
         <>
@@ -523,7 +526,7 @@ export default function App() {
         {userArea}
       </header>
 
-      {route === "/login" ? (
+      {route === "/login" || !authUser && route === "/" ? (
         <LoginPage
           onLoginSuccess={handleLoginSuccess}
           onSwitchToRegister={() => navigate("/register")}

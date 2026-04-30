@@ -23,7 +23,7 @@ export default function RegisterPage({ onRegisterSuccess, onSwitchToLogin }) {
     setError("");
 
     if (!canSubmit) {
-      setError("Please fill out all fields.");
+      setError("All fields are required.");
       return;
     }
 
@@ -40,7 +40,7 @@ export default function RegisterPage({ onRegisterSuccess, onSwitchToLogin }) {
         password: password
       });
     } catch (err) {
-      setError(err?.message || "Register failed. Please try again.");
+      setError(err?.message || "Unable to create account. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
@@ -124,7 +124,7 @@ export default function RegisterPage({ onRegisterSuccess, onSwitchToLogin }) {
             type="submit"
             disabled={!canSubmit || isSubmitting}
           >
-            {isSubmitting ? "Creating account..." : "Create account"}
+            {isSubmitting ? "Registering..." : "Register"}
           </button>
         </form>
 
