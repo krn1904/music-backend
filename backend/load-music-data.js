@@ -43,23 +43,34 @@ function getRecords(payload) {
   throw new Error('Unsupported JSON format. Expected array, songs[], or items[].');
 }
 
-function toMusicItem(raw) {
-  const artist = raw.artist;
-  const songTitle = raw.title;
-  const album = raw.album || '';
-  const year = raw.year || '';
-  const imageUrl = raw.img_url || '';
+function asTrimmedString(value) {
+  if (value == null) return '';
+  return String(value).trim();
+}
+
+function toMusicItem(raw, rowIndex) {
+  const artist = asTrimmedString(raw.artist);
+  const songTitle = asTrimmedString(raw.title);
+  const album = asTrimmedString(raw.album);
+  const year = asTrimmedString(raw.year);
+  const imageUrl = asTrimmedString(raw.img_url);
 
   if (!artist || !songTitle) {
-    return null;
+    return {
+      item: null,
+      reason: `Row ${rowIndex + 1}: missing required key fields (artist/title)`
+    };
   }
 
   return {
-    Artist: artist,
-    SongTitle: songTitle,
-    Album: album,
-    Year: year,
-    image_url: imageUrl
+    item: {
+      Artist: artist,
+      SongTitle: songTitle,
+      Album: album,
+      Year: year,
+      image_url: imageUrl
+    },
+    reason: null
   };
 }
 
@@ -75,13 +86,26 @@ async function run() {
   let created = 0;
   let skippedDuplicate = 0;
   let skippedInvalid = 0;
+  const invalidReasons = [];
+  const sourceCompositeKeys = new Set();
 
-  for (const raw of rawRecords) {
-    const item = toMusicItem(raw);
+  for (const [index, raw] of rawRecords.entries()) {
+    const { item, reason } = toMusicItem(raw, index);
     if (!item) {
       skippedInvalid += 1;
+      invalidReasons.push(reason);
       continue;
     }
+
+    const sourceKey = `${item.Artist}#${item.SongTitle}`;
+    if (sourceCompositeKeys.has(sourceKey)) {
+      skippedInvalid += 1;
+      invalidReasons.push(
+        `Row ${index + 1}: duplicate artist/title in source payload (${sourceKey})`
+      );
+      continue;
+    }
+    sourceCompositeKeys.add(sourceKey);
 
     try {
       await dynamodb.send(
@@ -108,6 +132,12 @@ async function run() {
   console.log(`Inserted: ${created}`);
   console.log(`Skipped duplicates: ${skippedDuplicate}`);
   console.log(`Skipped invalid rows: ${skippedInvalid}`);
+  if (invalidReasons.length > 0) {
+    console.log('Invalid row details:');
+    for (const reason of invalidReasons) {
+      console.log(`- ${reason}`);
+    }
+  }
 }
 
 run().catch((error) => {
