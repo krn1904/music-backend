@@ -17,8 +17,10 @@ export default function PaginationControls({
           <span>Total songs unavailable</span>
         ) : (
           <span>
-            {isTotalApproximate ? "Approx. " : ""}{totalSongs} songs
-            {totalPages ? ` • ${totalPages} pages` : ""}
+            {isTotalApproximate ? "Approx. " : ""}{totalSongs} {totalSongs === 1 ? "song" : "songs"}
+            {totalPages
+              ? ` • ${totalPages} ${totalPages === 1 ? "page" : "pages"}`
+              : ""}
           </span>
         )}
       </div>

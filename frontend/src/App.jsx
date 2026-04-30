@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import LibraryCard from "./components/LibraryCard";
 import PaginationControls from "./components/PaginationControls";
 import ResultCard from "./components/ResultCard";
@@ -41,7 +41,11 @@ function MainPage({ authUser }) {
   const [activeQuery, setActiveQuery] = useState(null);
   const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
   const [libraryPageIndex, setLibraryPageIndex] = useState(0);
-  const [pageSize, setPageSize] = useState(12);
+  const [libraryNextCursor, setLibraryNextCursor] = useState(null);
+  const [libraryCursorHistory, setLibraryCursorHistory] = useState([null]);
+  const [libraryTotalSongs, setLibraryTotalSongs] = useState(null);
+  const [libraryTotalPages, setLibraryTotalPages] = useState(null);
+  const [pageSize, setPageSize] = useState(10);
   const [queryForm, setQueryForm] = useState({
     title: "",
     year: "",
@@ -100,58 +104,84 @@ function MainPage({ authUser }) {
     : handlePreviousPage;
   const displayedHandleNext = isSearching ? handleSearchNextPage : handleNextPage;
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadSubscriptions() {
-      setSubsError("");
-
+  const fetchLibraryPage = useCallback(
+    async (nextToken, pageIndex) => {
       if (!userEmail) {
         setLibraryItems([]);
         setLibraryPageIndex(0);
+        setLibraryNextCursor(null);
+        setLibraryCursorHistory([null]);
+        setLibraryTotalSongs(null);
+        setLibraryTotalPages(null);
         return;
       }
 
+      setSubsError("");
+
       try {
         setIsLoadingLibrary(true);
-        const res = await fetch(
-          `${API_BASE_URL}/subscriptions?userEmail=${encodeURIComponent(userEmail)}`
-        );
+        const params = new URLSearchParams({
+          userEmail,
+          limit: String(pageSize)
+        });
+        if (nextToken) params.set("nextToken", nextToken);
+
+        const res = await fetch(`${API_BASE_URL}/subscriptions?${params.toString()}`);
         const payload = await res.json().catch(() => null);
         if (!res.ok) {
           throw new Error(payload?.error?.message || `Request failed: ${res.status}`);
         }
 
-        if (cancelled) return;
         setLibraryItems(payload?.items || []);
-        setLibraryPageIndex(0);
+        setLibraryPageIndex(pageIndex);
+        setLibraryNextCursor(payload?.pagination?.nextToken || null);
+        setLibraryTotalSongs(
+          Number.isFinite(payload?.pagination?.totalSongs) ? payload.pagination.totalSongs : null
+        );
+        setLibraryTotalPages(
+          Number.isFinite(payload?.pagination?.totalPages) ? payload.pagination.totalPages : null
+        );
       } catch (err) {
-        if (cancelled) return;
         setSubsError(err?.message || "Failed to load subscriptions");
         setLibraryItems([]);
+        setLibraryNextCursor(null);
+        setLibraryTotalSongs(null);
+        setLibraryTotalPages(null);
+      } finally {
+        setIsLoadingLibrary(false);
       }
-      finally {
-        if (!cancelled) setIsLoadingLibrary(false);
-      }
-    }
-
-    loadSubscriptions();
-    return () => {
-      cancelled = true;
-    };
-  }, [userEmail]);
-
-  const maxLibraryPageIndex = Math.max(0, Math.ceil(libraryItems.length / pageSize) - 1);
+    },
+    [pageSize, userEmail]
+  );
 
   useEffect(() => {
-    setLibraryPageIndex((prev) => Math.min(prev, maxLibraryPageIndex));
-  }, [maxLibraryPageIndex]);
+    if (!userEmail) {
+      setLibraryItems([]);
+      setLibraryPageIndex(0);
+      setLibraryNextCursor(null);
+      setLibraryCursorHistory([null]);
+      setLibraryTotalSongs(null);
+      setLibraryTotalPages(null);
+      return;
+    }
 
-  const pagedLibraryItems = useMemo(() => {
-    const start = libraryPageIndex * pageSize;
-    const end = start + pageSize;
-    return libraryItems.slice(start, end);
-  }, [libraryItems, libraryPageIndex, pageSize]);
+    setLibraryCursorHistory([null]);
+    fetchLibraryPage(null, 0);
+  }, [fetchLibraryPage, userEmail]);
+
+  const handleLibraryNextPage = async () => {
+    if (!libraryNextCursor || isLoadingLibrary) return;
+    const nextIndex = libraryPageIndex + 1;
+    setLibraryCursorHistory((prev) => [...prev, libraryNextCursor]);
+    await fetchLibraryPage(libraryNextCursor, nextIndex);
+  };
+
+  const handleLibraryPreviousPage = async () => {
+    if (libraryPageIndex === 0 || isLoadingLibrary) return;
+    const previousIndex = libraryPageIndex - 1;
+    const previousCursor = libraryCursorHistory[previousIndex] || null;
+    await fetchLibraryPage(previousCursor, previousIndex);
+  };
 
   async function postJson(path, payload) {
     const res = await fetch(`${API_BASE_URL}${path}`, {
@@ -192,12 +222,8 @@ function MainPage({ authUser }) {
 
     try {
       await postJson("/subscriptions/subscribe", payload);
-
-      setLibraryItems((prev) => {
-        const alreadyExists = prev.some((entry) => entry.id === item.id);
-        if (alreadyExists) return prev;
-        return [...prev, item];
-      });
+      setLibraryCursorHistory([null]);
+      await fetchLibraryPage(null, 0);
     } catch (err) {
       setSubsError(err?.message || "Failed to subscribe");
     }
@@ -208,7 +234,6 @@ function MainPage({ authUser }) {
 
     const item = libraryItems.find((x) => x.id === itemId);
     if (!item) {
-      setLibraryItems((prev) => prev.filter((i) => i.id !== itemId));
       return;
     }
 
@@ -221,7 +246,8 @@ function MainPage({ authUser }) {
 
     try {
       await postJson("/subscriptions/unsubscribe", payload);
-      setLibraryItems((prev) => prev.filter((i) => i.id !== itemId));
+      setLibraryCursorHistory([null]);
+      await fetchLibraryPage(null, 0);
     } catch (err) {
       setSubsError(err?.message || "Failed to remove subscription");
     }
@@ -244,9 +270,9 @@ function MainPage({ authUser }) {
               value={pageSize}
               onChange={(e) => setPageSize(Number(e.target.value))}
             >
-              <option value={6}>6</option>
-              <option value={12}>12</option>
-              <option value={24}>24</option>
+              <option value={5}>5</option>
+              <option value={10}>10</option>
+              <option value={15}>15</option>
             </select>
           </div>
         </div>
@@ -328,7 +354,7 @@ function MainPage({ authUser }) {
             </div>
           ) : (
             <div className="subscribed-list">
-              {pagedLibraryItems.map((item) => (
+              {libraryItems.map((item) => (
                 <SubscriptionRowCard
                   key={item.id}
                   item={item}
@@ -339,18 +365,18 @@ function MainPage({ authUser }) {
           )}
 
           {libraryItems.length > 0 ? (
-            <PaginationControls
-              currentPageIndex={libraryPageIndex}
-              isLoading={isLoadingLibrary}
-              hasNextPage={libraryPageIndex < maxLibraryPageIndex}
-              totalSongs={libraryItems.length}
-              totalPages={maxLibraryPageIndex + 1}
-              isTotalApproximate={false}
-              onPrevious={() => setLibraryPageIndex((p) => Math.max(0, p - 1))}
-              onNext={() =>
-                setLibraryPageIndex((p) => Math.min(maxLibraryPageIndex, p + 1))
-              }
-            />
+            <div className="subscribed-pagination">
+              <PaginationControls
+                currentPageIndex={libraryPageIndex}
+                isLoading={isLoadingLibrary}
+                hasNextPage={Boolean(libraryNextCursor)}
+                totalSongs={libraryTotalSongs}
+                totalPages={libraryTotalPages}
+                isTotalApproximate={false}
+                onPrevious={handleLibraryPreviousPage}
+                onNext={handleLibraryNextPage}
+              />
+            </div>
           ) : null}
         </div>
       </aside>

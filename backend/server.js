@@ -23,6 +23,7 @@ const PORT = 3001;
 const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 const DEFAULT_PAGE_SIZE = 12;
 const MAX_PAGE_SIZE = 50;
+const SUBSCRIPTIONS_PAGE_SIZE = 10;
 
 const sendError = (res, status, message, details) => {
   res.status(status).json({
@@ -64,7 +65,7 @@ app.get('/songs', async (req, res) => {
     const requestedLimit = Number.parseInt(req.query.limit, 10);
     const limit = Number.isFinite(requestedLimit)
       ? Math.min(Math.max(requestedLimit, 1), MAX_PAGE_SIZE)
-      : DEFAULT_PAGE_SIZE;
+      : SUBSCRIPTIONS_PAGE_SIZE;
 
     let exclusiveStartKey;
     if (req.query.nextToken) {
@@ -275,16 +276,58 @@ app.get('/subscriptions', async (req, res) => {
       return sendError(res, 400, 'Missing userEmail query parameter');
     }
 
-    const data = await dynamodb.send(
-      new QueryCommand({
-        TableName: SUBSCRIPTIONS_TABLE_NAME,
-        KeyConditionExpression: '#u = :email',
-        ExpressionAttributeNames: { '#u': 'UserEmail' },
-        ExpressionAttributeValues: { ':email': userEmail }
-      })
-    );
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(requestedLimit, 1), MAX_PAGE_SIZE)
+      : DEFAULT_PAGE_SIZE;
 
-    const items = (data?.Items || []).map((s) => ({
+    let offset = 0;
+    if (req.query.nextToken) {
+      try {
+        const decodedToken = decodePageToken(req.query.nextToken);
+        const parsedOffset = Number.parseInt(decodedToken?.offset, 10);
+        if (!Number.isFinite(parsedOffset) || parsedOffset < 0) {
+          return sendError(res, 400, 'Invalid pagination token', 'Invalid offset in token');
+        }
+        offset = parsedOffset;
+      } catch (tokenError) {
+        return sendError(res, 400, 'Invalid pagination token', tokenError.message);
+      }
+    }
+
+    const allItems = [];
+    let queryExclusiveStartKey;
+    do {
+      const page = await dynamodb.send(
+        new QueryCommand({
+          TableName: SUBSCRIPTIONS_TABLE_NAME,
+          KeyConditionExpression: '#u = :email',
+          ExpressionAttributeNames: { '#u': 'UserEmail' },
+          ExpressionAttributeValues: { ':email': userEmail },
+          ExclusiveStartKey: queryExclusiveStartKey
+        })
+      );
+
+      allItems.push(...(page?.Items || []));
+      queryExclusiveStartKey = page.LastEvaluatedKey;
+    } while (queryExclusiveStartKey);
+
+    const sortedItems = allItems.sort((a, b) => {
+      const aTime = Date.parse(a?.SubscribedAt || '');
+      const bTime = Date.parse(b?.SubscribedAt || '');
+      const safeATime = Number.isFinite(aTime) ? aTime : 0;
+      const safeBTime = Number.isFinite(bTime) ? bTime : 0;
+      return safeBTime - safeATime;
+    });
+
+    const totalSubscriptions = sortedItems.length;
+    const pagedItems = sortedItems.slice(offset, offset + limit);
+    const nextOffset = offset + limit;
+    const nextToken = nextOffset < totalSubscriptions
+      ? encodePageToken({ offset: nextOffset })
+      : null;
+
+    const items = pagedItems.map((s) => ({
       id: `${s.Artist}-${s.SongTitle}`,
       title: s.SongTitle || "-",
       artist: s.Artist || "-",
@@ -293,7 +336,18 @@ app.get('/subscriptions', async (req, res) => {
       image: s.image_url || ""
     }));
 
-    return res.json({ success: true, items });
+    return res.json({
+      success: true,
+      items,
+      pagination: {
+        limit,
+        nextToken,
+        hasNextPage: Boolean(nextToken),
+        totalSongs: totalSubscriptions,
+        totalPages: Math.max(1, Math.ceil(totalSubscriptions / limit)),
+        isTotalApproximate: false
+      }
+    });
   } catch (error) {
     console.error('GET /subscriptions failed:', error);
     return sendError(res, 500, 'Failed to list subscriptions', error?.message);
