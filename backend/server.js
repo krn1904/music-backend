@@ -107,7 +107,7 @@ app.post('/register', async (req, res) => {
     const { username, email, password } = req.body || {};
 
     if (!username || !email || !password) {
-      return sendError(res, 400, 'Missing required fields');
+      return sendError(res, 400, 'All fields are required.');
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
@@ -116,7 +116,7 @@ app.post('/register', async (req, res) => {
     const createdAt = new Date().toISOString();
 
     if (!normalizedEmail.includes('@')) {
-      return sendError(res, 400, 'Invalid email address');
+      return sendError(res, 400, 'Please enter a valid email address.');
     }
 
     await dynamodb.send(
@@ -139,10 +139,10 @@ app.post('/register', async (req, res) => {
     });
   } catch (error) {
     if (error?.name === 'ConditionalCheckFailedException') {
-      return sendError(res, 409, 'Account already exists', error.name);
+      return sendError(res, 409, 'The email already exists', error.name);
     }
     console.error('POST /register failed:', error);
-    return sendError(res, 500, 'Failed to register', error?.message);
+    return sendError(res, 500, 'Unable to create account. Please try again.', error?.message);
   }
 });
 
@@ -152,7 +152,7 @@ app.post('/login', async (req, res) => {
     const { email, password } = req.body || {};
 
     if (!email || !password) {
-      return sendError(res, 400, 'Missing required fields');
+      return sendError(res, 400, 'Email and password are required.');
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
@@ -167,7 +167,7 @@ app.post('/login', async (req, res) => {
 
     const item = data?.Item;
     if (!item || item.Password !== normalizedPassword) {
-      return sendError(res, 401, 'Invalid email or password');
+      return sendError(res, 401, 'email or password is invalid');
     }
 
     return res.json({
@@ -179,7 +179,7 @@ app.post('/login', async (req, res) => {
     });
   } catch (error) {
     console.error('POST /login failed:', error);
-    return sendError(res, 500, 'Failed to login', error?.message);
+    return sendError(res, 500, 'Unable to log in. Please try again.', error?.message);
   }
 });
 
