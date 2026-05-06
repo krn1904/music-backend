@@ -7,7 +7,8 @@ function mapSongItem(item) {
     artist: item.Artist || "-",
     album: item.Album || "-",
     year: item.Year || "-",
-    image: item.image_url || ""
+    imageKey: item.image_url || "",
+    image: item.image_signed_url || item.image_url || ""
   };
 }
 

@@ -217,7 +217,8 @@ function MainPage({ authUser }) {
       songKey: `${item.artist}#${item.title}`,
       album: item.album,
       year: item.year,
-      image_url: item.image
+      // Send the S3 key (stable) rather than an expiring presigned URL.
+      image_url: item.imageKey || item.image || ""
     };
 
     try {

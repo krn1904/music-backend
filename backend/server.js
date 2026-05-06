@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const {
   DynamoDBDocumentClient,
   ScanCommand,
@@ -21,6 +23,8 @@ const SUBSCRIPTIONS_TABLE_NAME =
   process.env.DYNAMODB_SUBSCRIPTIONS_TABLE || 'subscriptions';
 const PORT = 3001;
 const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
+const S3_BUCKET = process.env.S3_BUCKET || '';
+const IMAGE_URL_TTL_SECONDS = Number.parseInt(process.env.S3_SIGNED_URL_TTL_SECONDS || '900', 10);
 const DEFAULT_PAGE_SIZE = 12;
 const MAX_PAGE_SIZE = 50;
 const SUBSCRIPTIONS_PAGE_SIZE = 10;
@@ -45,6 +49,46 @@ const dynamodbClient = new DynamoDBClient({
 });
 
 const dynamodb = DynamoDBDocumentClient.from(dynamodbClient);
+
+const s3 = new S3Client({
+  region: AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    sessionToken: process.env.AWS_SESSION_TOKEN
+  }
+});
+
+function looksLikeHttpUrl(value) {
+  return typeof value === 'string' && /^https?:\/\//i.test(value);
+}
+
+async function toSignedImageUrl(imageUrlOrKey) {
+  const raw = typeof imageUrlOrKey === 'string' ? imageUrlOrKey.trim() : '';
+  if (!raw) return { imageKey: '', imageSignedUrl: '' };
+
+  // Back-compat: if the table still contains the original remote URL, just use it.
+  if (looksLikeHttpUrl(raw)) {
+    return { imageKey: '', imageSignedUrl: raw };
+  }
+
+  // Expected new format: image_url is an S3 object key in S3_BUCKET
+  if (!S3_BUCKET) {
+    return { imageKey: raw, imageSignedUrl: '' };
+  }
+
+  const safeTtl = Number.isFinite(IMAGE_URL_TTL_SECONDS) && IMAGE_URL_TTL_SECONDS > 0
+    ? Math.min(Math.max(IMAGE_URL_TTL_SECONDS, 60), 3600)
+    : 900;
+
+  const signedUrl = await getSignedUrl(
+    s3,
+    new GetObjectCommand({ Bucket: S3_BUCKET, Key: raw }),
+    { expiresIn: safeTtl }
+  );
+
+  return { imageKey: raw, imageSignedUrl: signedUrl };
+}
 
 function decodePageToken(token) {
   try {
@@ -86,9 +130,20 @@ app.get('/songs', async (req, res) => {
 
     const nextToken = encodePageToken(data.LastEvaluatedKey);
 
+    const items = await Promise.all(
+      (data.Items || []).map(async (item) => {
+        const { imageKey, imageSignedUrl } = await toSignedImageUrl(item?.image_url);
+        return {
+          ...item,
+          image_url: imageKey || item?.image_url || '',
+          image_signed_url: imageSignedUrl || ''
+        };
+      })
+    );
+
     return res.json({
       success: true,
-      items: data.Items || [],
+      items,
       pagination: {
         limit,
         nextToken,
@@ -223,6 +278,7 @@ app.post('/subscriptions/subscribe', async (req, res) => {
           SongTitle: normalizedSongTitle,
           Album: album != null ? String(album) : "",
           Year: normalizedYear,
+          // Store the S3 key (not a presigned URL). If a URL is provided, store it as-is.
           image_url: image_url != null ? String(image_url) : "",
           SubscribedAt: new Date().toISOString()
         },
@@ -327,14 +383,20 @@ app.get('/subscriptions', async (req, res) => {
       ? encodePageToken({ offset: nextOffset })
       : null;
 
-    const items = pagedItems.map((s) => ({
-      id: `${s.Artist}-${s.SongTitle}`,
-      title: s.SongTitle || "-",
-      artist: s.Artist || "-",
-      album: s.Album || "-",
-      year: s.Year || "-",
-      image: s.image_url || ""
-    }));
+    const items = await Promise.all(
+      pagedItems.map(async (s) => {
+        const { imageKey, imageSignedUrl } = await toSignedImageUrl(s?.image_url);
+        return {
+          id: `${s.Artist}-${s.SongTitle}`,
+          title: s.SongTitle || "-",
+          artist: s.Artist || "-",
+          album: s.Album || "-",
+          year: s.Year || "-",
+          image: imageSignedUrl || "",
+          imageKey: imageKey || ""
+        };
+      })
+    );
 
     return res.json({
       success: true,
@@ -411,22 +473,53 @@ app.get('/songs/search', async (req, res) => {
       );
     }
 
-    const data = await dynamodb.send(
-      new ScanCommand({
-        TableName: TABLE_NAME,
-        Limit: limit,
-        ExclusiveStartKey: exclusiveStartKey,
-        FilterExpression: filterParts.join(' AND '),
-        ExpressionAttributeNames,
-        ExpressionAttributeValues
+    // Accumulate matches across multiple Scan pages until we have `limit`
+    // items or there are no more pages. This avoids empty result pages
+    // when matches happen to live in later segments of the table.
+    const matchedItems = [];
+    let lastEvaluatedKey = exclusiveStartKey;
+
+    do {
+      const page = await dynamodb.send(
+        new ScanCommand({
+          TableName: TABLE_NAME,
+          ExclusiveStartKey: lastEvaluatedKey,
+          FilterExpression: filterParts.join(' AND '),
+          ExpressionAttributeNames,
+          ExpressionAttributeValues
+        })
+      );
+
+      if (Array.isArray(page.Items) && page.Items.length > 0) {
+        for (const item of page.Items) {
+          matchedItems.push(item);
+          if (matchedItems.length >= limit) break;
+        }
+      }
+
+      // Always advance the scan cursor. If we don't, we can exit early
+      // before collecting enough filtered matches (especially for small limits).
+      lastEvaluatedKey = page.LastEvaluatedKey;
+
+      if (!lastEvaluatedKey || matchedItems.length >= limit) break;
+    } while (true);
+
+    const nextToken = encodePageToken(lastEvaluatedKey);
+
+    const items = await Promise.all(
+      matchedItems.map(async (item) => {
+        const { imageKey, imageSignedUrl } = await toSignedImageUrl(item?.image_url);
+        return {
+          ...item,
+          image_url: imageKey || item?.image_url || '',
+          image_signed_url: imageSignedUrl || ''
+        };
       })
     );
 
-    const nextToken = encodePageToken(data.LastEvaluatedKey);
-
     return res.json({
       success: true,
-      items: data.Items || [],
+      items,
       pagination: {
         limit,
         nextToken,

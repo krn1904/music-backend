@@ -1,6 +1,11 @@
 const fs = require('fs');
 const path = require('path');
-const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+const {
+  CreateTableCommand,
+  DescribeTableCommand,
+  DynamoDBClient,
+  waitUntilTableExists
+} = require('@aws-sdk/client-dynamodb');
 const { DynamoDBDocumentClient, PutCommand } = require('@aws-sdk/lib-dynamodb');
 require('dotenv').config({ path: '../.env' });
 
@@ -35,6 +40,41 @@ const dynamodbClient = new DynamoDBClient({
 });
 
 const dynamodb = DynamoDBDocumentClient.from(dynamodbClient);
+
+async function tableExists(tableName) {
+  try {
+    await dynamodbClient.send(new DescribeTableCommand({ TableName: tableName }));
+    return true;
+  } catch (error) {
+    if (error?.name === 'ResourceNotFoundException') return false;
+    throw error;
+  }
+}
+
+async function ensureMusicTable() {
+  const exists = await tableExists(TABLE_NAME);
+  if (exists) return;
+
+  await dynamodbClient.send(
+    new CreateTableCommand({
+      TableName: TABLE_NAME,
+      AttributeDefinitions: [
+        { AttributeName: 'Artist', AttributeType: 'S' },
+        { AttributeName: 'SongTitle', AttributeType: 'S' }
+      ],
+      KeySchema: [
+        { AttributeName: 'Artist', KeyType: 'HASH' },
+        { AttributeName: 'SongTitle', KeyType: 'RANGE' }
+      ],
+      BillingMode: 'PAY_PER_REQUEST'
+    })
+  );
+
+  await waitUntilTableExists(
+    { client: dynamodbClient, maxWaitTime: 60 },
+    { TableName: TABLE_NAME }
+  );
+}
 
 function getRecords(payload) {
   if (Array.isArray(payload)) return payload;
@@ -75,6 +115,8 @@ function toMusicItem(raw, rowIndex) {
 }
 
 async function run() {
+  await ensureMusicTable();
+
   if (!fs.existsSync(dataFilePath)) {
     throw new Error(`Data file not found: ${dataFilePath}`);
   }
