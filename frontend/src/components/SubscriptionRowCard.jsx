@@ -2,6 +2,9 @@ import React from "react";
 
 export default function SubscriptionRowCard({ item, onRemove }) {
   const fullTitle = `${item.title} — ${item.artist} • ${item.album} • ${item.year}`;
+  const itemId = `${String(item?.artist || "").trim()}-${String(item?.title || "").trim()}-${String(
+    item?.year || ""
+  ).trim()}`;
 
   return (
     <div className="subscription-row" title={fullTitle}>
@@ -15,7 +18,7 @@ export default function SubscriptionRowCard({ item, onRemove }) {
       </div>
       <button
         className="subscription-row-remove-btn"
-        onClick={() => onRemove(item.id)}
+        onClick={() => onRemove(itemId)}
         title="Remove from library"
         aria-label={`Remove ${item.title} from library`}
       >

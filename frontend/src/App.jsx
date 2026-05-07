@@ -20,6 +20,15 @@ function safeJsonParse(value) {
   }
 }
 
+function getSongIdentity(item) {
+  const artist = String(item?.artist ?? item?.Artist ?? "").trim();
+  const title = String(item?.title ?? item?.SongTitle ?? "").trim();
+  const year = String(item?.year ?? item?.Year ?? "").trim();
+  if (artist && title && year) return `${artist}-${title}-${year}`;
+  if (artist && title) return `${artist}-${title}`;
+  return String(item?.id ?? "");
+}
+
 function getAuthUser() {
   const raw = localStorage.getItem(AUTH_USER_KEY);
   const parsed = safeJsonParse(raw);
@@ -232,7 +241,7 @@ function MainPage({ authUser }) {
   const handleRemove = async (itemId) => {
     if (!userEmail) return;
 
-    const item = libraryItems.find((x) => x.id === itemId);
+    const item = libraryItems.find((x) => getSongIdentity(x) === itemId);
     if (!item) {
       return;
     }
@@ -254,7 +263,7 @@ function MainPage({ authUser }) {
   };
 
   const subscribedSongIds = useMemo(
-    () => new Set(libraryItems.map((item) => item.id)),
+    () => new Set(libraryItems.map((item) => getSongIdentity(item))),
     [libraryItems]
   );
 
@@ -356,7 +365,7 @@ function MainPage({ authUser }) {
             <div className="subscribed-list">
               {libraryItems.map((item) => (
                 <SubscriptionRowCard
-                  key={item.id}
+                  key={getSongIdentity(item)}
                   item={item}
                   onRemove={handleRemove}
                 />
@@ -395,10 +404,10 @@ function MainPage({ authUser }) {
           <div className="library-grid">
             {displayedResults.map((item) => (
               <ResultCard
-                key={item.id}
+                key={getSongIdentity(item)}
                 item={item}
                 onSubscribe={handleSubscribe}
-                isSubscribed={subscribedSongIds.has(item.id)}
+                isSubscribed={subscribedSongIds.has(getSongIdentity(item))}
               />
             ))}
           </div>
