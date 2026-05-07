@@ -63,10 +63,20 @@ export function useSongsSearch(apiBaseUrl, pageSize, activeQuery) {
         const songs = (payload.items || []).map(mapSongItem);
         setQueryResults(songs);
         setNextCursor(payload.pagination?.nextToken || null);
+        setTotalSongs(
+          Number.isFinite(payload.pagination?.totalSongs) ? payload.pagination.totalSongs : null
+        );
+        setTotalPages(
+          Number.isFinite(payload.pagination?.totalPages) ? payload.pagination.totalPages : null
+        );
+        setIsTotalApproximate(Boolean(payload.pagination?.isTotalApproximate));
       } catch (error) {
         setSongsError(error?.message || "Failed to load search results");
         setQueryResults([]);
         setNextCursor(null);
+        setTotalSongs(null);
+        setTotalPages(null);
+        setIsTotalApproximate(false);
       } finally {
         setIsLoadingSongs(false);
       }
