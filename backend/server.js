@@ -429,32 +429,13 @@ app.get('/songs/search', async (req, res) => {
     const artist = typeof req.query.artist === "string" ? req.query.artist.trim() : "";
     const album = typeof req.query.album === "string" ? req.query.album.trim() : "";
 
-    const filterParts = [];
-    const ExpressionAttributeNames = {};
-    const ExpressionAttributeValues = {};
+    const normalizedTitle = title.toLowerCase();
+    const normalizedYear = year.toLowerCase();
+    const normalizedArtist = artist.toLowerCase();
+    const normalizedAlbum = album.toLowerCase();
 
-    if (title) {
-      ExpressionAttributeNames['#st'] = 'SongTitle';
-      ExpressionAttributeValues[':title'] = title;
-      filterParts.push('contains(#st, :title)');
-    }
-    if (year) {
-      ExpressionAttributeNames['#y'] = 'Year';
-      ExpressionAttributeValues[':year'] = year;
-      filterParts.push('contains(#y, :year)');
-    }
-    if (artist) {
-      ExpressionAttributeNames['#a'] = 'Artist';
-      ExpressionAttributeValues[':artist'] = artist;
-      filterParts.push('contains(#a, :artist)');
-    }
-    if (album) {
-      ExpressionAttributeNames['#al'] = 'Album';
-      ExpressionAttributeValues[':album'] = album;
-      filterParts.push('contains(#al, :album)');
-    }
-
-    if (filterParts.length === 0) {
+    const hasAnyFilter = Boolean(normalizedTitle || normalizedYear || normalizedArtist || normalizedAlbum);
+    if (!hasAnyFilter) {
       return sendError(
         res,
         400,
@@ -485,15 +466,25 @@ app.get('/songs/search', async (req, res) => {
       const page = await dynamodb.send(
         new ScanCommand({
           TableName: TABLE_NAME,
-          ExclusiveStartKey: scanExclusiveStartKey,
-          FilterExpression: filterParts.join(' AND '),
-          ExpressionAttributeNames,
-          ExpressionAttributeValues
+          ExclusiveStartKey: scanExclusiveStartKey
         })
       );
 
       if (Array.isArray(page.Items) && page.Items.length > 0) {
-        matchedItems.push(...page.Items);
+        const filteredItems = page.Items.filter((item) => {
+          const itemTitle = String(item?.SongTitle || '').toLowerCase();
+          const itemYear = String(item?.Year || '').toLowerCase();
+          const itemArtist = String(item?.Artist || '').toLowerCase();
+          const itemAlbum = String(item?.Album || '').toLowerCase();
+
+          if (normalizedTitle && !itemTitle.includes(normalizedTitle)) return false;
+          if (normalizedYear && !itemYear.includes(normalizedYear)) return false;
+          if (normalizedArtist && !itemArtist.includes(normalizedArtist)) return false;
+          if (normalizedAlbum && !itemAlbum.includes(normalizedAlbum)) return false;
+
+          return true;
+        });
+        matchedItems.push(...filteredItems);
       }
 
       scanExclusiveStartKey = page.LastEvaluatedKey;
