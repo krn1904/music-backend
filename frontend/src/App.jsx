@@ -214,7 +214,6 @@ function MainPage({ authUser }) {
       userEmail,
       artist: item.artist,
       songTitle: item.title,
-      songKey: `${item.artist}#${item.title}`,
       album: item.album,
       year: item.year,
       // Send the S3 key (stable) rather than an expiring presigned URL.
@@ -242,7 +241,7 @@ function MainPage({ authUser }) {
       userEmail,
       artist: item.artist,
       songTitle: item.title,
-      songKey: `${item.artist}#${item.title}`
+      year: item.year
     };
 
     try {

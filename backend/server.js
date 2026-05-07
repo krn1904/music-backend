@@ -238,8 +238,12 @@ app.post('/login', async (req, res) => {
   }
 });
 
-function buildSongKey(artist, songTitle) {
-  return `${String(artist).trim()}#${String(songTitle).trim()}`;
+// Subscription SongKey is a 3-part composite (Artist#SongTitle#Year) so
+// legitimate re-releases (e.g. Taylor Swift "Delicate" 2017 vs 2018) can be
+// subscribed/unsubscribed independently. Server-side construction is the
+// single source of truth; any client-supplied songKey is ignored.
+function buildSongKey(artist, songTitle, year) {
+  return `${String(artist).trim()}#${String(songTitle).trim()}#${String(year || '').trim()}`;
 }
 
 // Add a song to a user's subscription list.
@@ -247,7 +251,6 @@ app.post('/subscriptions/subscribe', async (req, res) => {
   try {
     const {
       userEmail,
-      songKey: providedSongKey,
       artist,
       songTitle,
       album,
@@ -255,18 +258,16 @@ app.post('/subscriptions/subscribe', async (req, res) => {
       image_url
     } = req.body || {};
 
-    if (!userEmail || !artist || !songTitle) {
-      return sendError(res, 400, 'Missing required fields');
+    if (!userEmail || !artist || !songTitle || year == null || String(year).trim() === '') {
+      return sendError(res, 400, 'Missing required fields (userEmail, artist, songTitle, year)');
     }
 
     const normalizedUserEmail = String(userEmail).trim().toLowerCase();
     const normalizedSongTitle = String(songTitle).trim();
     const normalizedArtist = String(artist).trim();
-    const normalizedYear = year != null ? String(year) : "";
+    const normalizedYear = String(year).trim();
 
-    const songKey = providedSongKey
-      ? String(providedSongKey).trim()
-      : buildSongKey(normalizedArtist, normalizedSongTitle);
+    const songKey = buildSongKey(normalizedArtist, normalizedSongTitle, normalizedYear);
 
     await dynamodb.send(
       new PutCommand({
@@ -299,16 +300,14 @@ app.post('/subscriptions/subscribe', async (req, res) => {
 // Remove a song from a user's subscription list.
 app.post('/subscriptions/unsubscribe', async (req, res) => {
   try {
-    const { userEmail, songKey: providedSongKey, artist, songTitle } = req.body || {};
+    const { userEmail, artist, songTitle, year } = req.body || {};
 
-    if (!userEmail || !providedSongKey && (!artist || !songTitle)) {
-      return sendError(res, 400, 'Missing required fields');
+    if (!userEmail || !artist || !songTitle || year == null || String(year).trim() === '') {
+      return sendError(res, 400, 'Missing required fields (userEmail, artist, songTitle, year)');
     }
 
     const normalizedUserEmail = String(userEmail).trim().toLowerCase();
-    const songKey = providedSongKey
-      ? String(providedSongKey).trim()
-      : buildSongKey(artist, songTitle);
+    const songKey = buildSongKey(artist, songTitle, year);
 
     await dynamodb.send(
       new DeleteCommand({
@@ -570,6 +569,113 @@ app.get('/songs/stats', async (req, res) => {
   } catch (error) {
     console.error('GET /songs/stats failed:', error);
     return sendError(res, 500, 'Failed to fetch song statistics', error.message);
+  }
+});
+
+// Query the LSI AlbumIndex (PK: Artist, SK: Album).
+// Returns all songs for a given artist on a given album in a single Query
+// (no Scan, no client-side filter). Demonstrates purposeful LSI usage.
+app.get('/songs/by-album', async (req, res) => {
+  try {
+    const artist = typeof req.query.artist === 'string' ? req.query.artist.trim() : '';
+    const album = typeof req.query.album === 'string' ? req.query.album.trim() : '';
+
+    if (!artist || !album) {
+      return sendError(res, 400, 'Missing required query params: artist and album');
+    }
+
+    const data = await dynamodb.send(
+      new QueryCommand({
+        TableName: TABLE_NAME,
+        IndexName: 'AlbumIndex',
+        KeyConditionExpression: '#a = :artist AND #al = :album',
+        ExpressionAttributeNames: { '#a': 'Artist', '#al': 'Album' },
+        ExpressionAttributeValues: { ':artist': artist, ':album': album }
+      })
+    );
+
+    const items = await Promise.all(
+      (data.Items || []).map(async (item) => {
+        const { imageKey, imageSignedUrl } = await toSignedImageUrl(item?.image_url);
+        return {
+          ...item,
+          image_url: imageKey || item?.image_url || '',
+          image_signed_url: imageSignedUrl || ''
+        };
+      })
+    );
+
+    return res.json({
+      success: true,
+      items,
+      meta: {
+        index: 'AlbumIndex',
+        operation: 'Query',
+        count: items.length
+      }
+    });
+  } catch (error) {
+    console.error('GET /songs/by-album failed:', error);
+    return sendError(res, 500, 'Failed to query by album', error.message);
+  }
+});
+
+// Query the GSI YearArtistIndex (PK: Year, SK: Artist).
+// Returns all songs released in a given year, optionally filtered by an
+// artist prefix using begins_with on the SK. Demonstrates purposeful GSI
+// usage and Query (not Scan) for year-based access patterns.
+app.get('/songs/by-year', async (req, res) => {
+  try {
+    const year = typeof req.query.year === 'string' ? req.query.year.trim() : '';
+    const artist = typeof req.query.artist === 'string' ? req.query.artist.trim() : '';
+
+    if (!year) {
+      return sendError(res, 400, 'Missing required query param: year');
+    }
+
+    const ExpressionAttributeNames = { '#y': 'Year' };
+    const ExpressionAttributeValues = { ':year': year };
+    let KeyConditionExpression = '#y = :year';
+
+    if (artist) {
+      ExpressionAttributeNames['#a'] = 'Artist';
+      ExpressionAttributeValues[':artist'] = artist;
+      KeyConditionExpression += ' AND begins_with(#a, :artist)';
+    }
+
+    const data = await dynamodb.send(
+      new QueryCommand({
+        TableName: TABLE_NAME,
+        IndexName: 'YearArtistIndex',
+        KeyConditionExpression,
+        ExpressionAttributeNames,
+        ExpressionAttributeValues
+      })
+    );
+
+    const items = await Promise.all(
+      (data.Items || []).map(async (item) => {
+        const { imageKey, imageSignedUrl } = await toSignedImageUrl(item?.image_url);
+        return {
+          ...item,
+          image_url: imageKey || item?.image_url || '',
+          image_signed_url: imageSignedUrl || ''
+        };
+      })
+    );
+
+    return res.json({
+      success: true,
+      items,
+      meta: {
+        index: 'YearArtistIndex',
+        operation: 'Query',
+        count: items.length
+      }
+    });
+  } catch (error) {
+    console.error('GET /songs/by-year failed:', error);
+    return sendError(res, 500, 'Failed to query by year', error.message);
   }
 });
 

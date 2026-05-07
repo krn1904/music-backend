@@ -60,11 +60,33 @@ async function ensureMusicTable() {
       TableName: TABLE_NAME,
       AttributeDefinitions: [
         { AttributeName: 'Artist', AttributeType: 'S' },
-        { AttributeName: 'SongTitle', AttributeType: 'S' }
+        { AttributeName: 'SongTitleYear', AttributeType: 'S' },
+        { AttributeName: 'Album', AttributeType: 'S' },
+        { AttributeName: 'Year', AttributeType: 'S' }
       ],
       KeySchema: [
         { AttributeName: 'Artist', KeyType: 'HASH' },
-        { AttributeName: 'SongTitle', KeyType: 'RANGE' }
+        { AttributeName: 'SongTitleYear', KeyType: 'RANGE' }
+      ],
+      LocalSecondaryIndexes: [
+        {
+          IndexName: 'AlbumIndex',
+          KeySchema: [
+            { AttributeName: 'Artist', KeyType: 'HASH' },
+            { AttributeName: 'Album', KeyType: 'RANGE' }
+          ],
+          Projection: { ProjectionType: 'ALL' }
+        }
+      ],
+      GlobalSecondaryIndexes: [
+        {
+          IndexName: 'YearArtistIndex',
+          KeySchema: [
+            { AttributeName: 'Year', KeyType: 'HASH' },
+            { AttributeName: 'Artist', KeyType: 'RANGE' }
+          ],
+          Projection: { ProjectionType: 'ALL' }
+        }
       ],
       BillingMode: 'PAY_PER_REQUEST'
     })
@@ -102,9 +124,20 @@ function toMusicItem(raw, rowIndex) {
     };
   }
 
+  // Year is now part of the composite sort key (SongTitleYear). Without a
+  // year value we cannot form a stable, collision-free SK for re-releases,
+  // so fail the row loudly rather than silently fall back.
+  if (!year) {
+    return {
+      item: null,
+      reason: `Row ${rowIndex + 1}: missing year (required for SongTitleYear sort key)`
+    };
+  }
+
   return {
     item: {
       Artist: artist,
+      SongTitleYear: `${songTitle}#${year}`,
       SongTitle: songTitle,
       Album: album,
       Year: year,
@@ -139,11 +172,11 @@ async function run() {
       continue;
     }
 
-    const sourceKey = `${item.Artist}#${item.SongTitle}`;
+    const sourceKey = `${item.Artist}#${item.SongTitleYear}`;
     if (sourceCompositeKeys.has(sourceKey)) {
       skippedInvalid += 1;
       invalidReasons.push(
-        `Row ${index + 1}: duplicate artist/title in source payload (${sourceKey})`
+        `Row ${index + 1}: duplicate artist/title/year in source payload (${sourceKey})`
       );
       continue;
     }
@@ -155,7 +188,7 @@ async function run() {
           TableName: TABLE_NAME,
           Item: item,
           ConditionExpression:
-            'attribute_not_exists(Artist) AND attribute_not_exists(SongTitle)'
+            'attribute_not_exists(Artist) AND attribute_not_exists(SongTitleYear)'
         })
       );
       created += 1;
