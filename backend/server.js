@@ -424,15 +424,6 @@ app.get('/songs/search', async (req, res) => {
       ? Math.min(Math.max(requestedLimit, 1), MAX_PAGE_SIZE)
       : DEFAULT_PAGE_SIZE;
 
-    let exclusiveStartKey;
-    if (req.query.nextToken) {
-      try {
-        exclusiveStartKey = decodePageToken(req.query.nextToken);
-      } catch (tokenError) {
-        return sendError(res, 400, 'Invalid pagination token', tokenError.message);
-      }
-    }
-
     const title = typeof req.query.title === "string" ? req.query.title.trim() : "";
     const year = typeof req.query.year === "string" ? req.query.year.trim() : "";
     const artist = typeof req.query.artist === "string" ? req.query.artist.trim() : "";
@@ -472,17 +463,29 @@ app.get('/songs/search', async (req, res) => {
       );
     }
 
-    // Accumulate matches across multiple Scan pages until we have `limit`
-    // items or there are no more pages. This avoids empty result pages
-    // when matches happen to live in later segments of the table.
-    const matchedItems = [];
-    let lastEvaluatedKey = exclusiveStartKey;
+    // Use offset pagination for filtered scans so pagination remains correct
+    // even when a single DynamoDB Scan page contains more matches than `limit`.
+    let offset = 0;
+    if (req.query.nextToken) {
+      try {
+        const decodedToken = decodePageToken(req.query.nextToken);
+        const parsedOffset = Number.parseInt(decodedToken?.offset, 10);
+        if (!Number.isFinite(parsedOffset) || parsedOffset < 0) {
+          return sendError(res, 400, 'Invalid pagination token', 'Invalid offset in token');
+        }
+        offset = parsedOffset;
+      } catch (tokenError) {
+        return sendError(res, 400, 'Invalid pagination token', tokenError.message);
+      }
+    }
 
+    const matchedItems = [];
+    let scanExclusiveStartKey;
     do {
       const page = await dynamodb.send(
         new ScanCommand({
           TableName: TABLE_NAME,
-          ExclusiveStartKey: lastEvaluatedKey,
+          ExclusiveStartKey: scanExclusiveStartKey,
           FilterExpression: filterParts.join(' AND '),
           ExpressionAttributeNames,
           ExpressionAttributeValues
@@ -490,23 +493,23 @@ app.get('/songs/search', async (req, res) => {
       );
 
       if (Array.isArray(page.Items) && page.Items.length > 0) {
-        for (const item of page.Items) {
-          matchedItems.push(item);
-          if (matchedItems.length >= limit) break;
-        }
+        matchedItems.push(...page.Items);
       }
 
-      // Always advance the scan cursor. If we don't, we can exit early
-      // before collecting enough filtered matches (especially for small limits).
-      lastEvaluatedKey = page.LastEvaluatedKey;
+      scanExclusiveStartKey = page.LastEvaluatedKey;
+    } while (scanExclusiveStartKey);
 
-      if (!lastEvaluatedKey || matchedItems.length >= limit) break;
-    } while (true);
+    const totalSongs = matchedItems.length;
+    const pagedItems = matchedItems.slice(offset, offset + limit);
+    const nextOffset = offset + limit;
+    const nextToken = nextOffset < totalSongs
+      ? encodePageToken({ offset: nextOffset })
+      : null;
 
-    const nextToken = encodePageToken(lastEvaluatedKey);
+    const totalPages = Math.max(1, Math.ceil(totalSongs / limit));
 
     const items = await Promise.all(
-      matchedItems.map(async (item) => {
+      pagedItems.map(async (item) => {
         const { imageKey, imageSignedUrl } = await toSignedImageUrl(item?.image_url);
         return {
           ...item,
@@ -521,6 +524,9 @@ app.get('/songs/search', async (req, res) => {
       items,
       pagination: {
         limit,
+        totalSongs,
+        totalPages,
+        isTotalApproximate: false,
         nextToken,
         hasNextPage: Boolean(nextToken)
       }
