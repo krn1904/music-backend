@@ -162,13 +162,16 @@ async function run() {
   console.log(`Upload summary: uploaded=${uploaded}, skippedExisting=${skippedExisting}, failed=${failed}`);
 
   // Update DynamoDB so each song's image_url points to the S3 key.
+  // Table key schema: HASH=Artist, RANGE=SongTitleYear ("title#year").
   let updatedSongs = 0;
   let skippedSongs = 0;
+  let failedSongs = 0;
 
   for (const raw of rawRecords) {
     const artist = asTrimmedString(raw.artist);
     const songTitle = asTrimmedString(raw.title);
-    if (!artist || !songTitle) {
+    const year = asTrimmedString(raw.year);
+    if (!artist || !songTitle || !year) {
       skippedSongs += 1;
       continue;
     }
@@ -179,18 +182,36 @@ async function run() {
       continue;
     }
 
-    await dynamodb.send(
-      new UpdateCommand({
-        TableName: TABLE_NAME,
-        Key: { Artist: artist, SongTitle: songTitle },
-        UpdateExpression: 'SET image_url = :k',
-        ExpressionAttributeValues: { ':k': s3Key }
-      })
-    );
-    updatedSongs += 1;
+    const songTitleYear = `${songTitle}#${year}`;
+
+    try {
+      await dynamodb.send(
+        new UpdateCommand({
+          TableName: TABLE_NAME,
+          Key: { Artist: artist, SongTitleYear: songTitleYear },
+          UpdateExpression: 'SET image_url = :k',
+          ExpressionAttributeValues: { ':k': s3Key },
+          ConditionExpression:
+            'attribute_exists(Artist) AND attribute_exists(SongTitleYear)'
+        })
+      );
+      updatedSongs += 1;
+    } catch (err) {
+      if (err?.name === 'ConditionalCheckFailedException') {
+        skippedSongs += 1;
+        continue;
+      }
+      failedSongs += 1;
+      console.error(
+        `DynamoDB update failed for ${artist} / ${songTitleYear}:`,
+        err?.message || err
+      );
+    }
   }
 
-  console.log(`DynamoDB update summary: updatedSongs=${updatedSongs}, skippedSongs=${skippedSongs}`);
+  console.log(
+    `DynamoDB update summary: updatedSongs=${updatedSongs}, skippedSongs=${skippedSongs}, failedSongs=${failedSongs}`
+  );
   console.log('Done.');
 }
 
