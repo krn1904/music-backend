@@ -298,7 +298,7 @@ app.post('/subscriptions/subscribe', async (req, res) => {
 });
 
 // Remove a song from a user's subscription list.
-app.post('/subscriptions/unsubscribe', async (req, res) => {
+app.delete('/subscriptions/unsubscribe', async (req, res) => {
   try {
     const { userEmail, artist, songTitle, year } = req.body || {};
 
@@ -318,7 +318,7 @@ app.post('/subscriptions/unsubscribe', async (req, res) => {
 
     return res.json({ success: true });
   } catch (error) {
-    console.error('POST /subscriptions/unsubscribe failed:', error);
+    console.error('DELETE /subscriptions/unsubscribe failed:', error);
     return sendError(res, 500, 'Failed to unsubscribe', error?.message);
   }
 });

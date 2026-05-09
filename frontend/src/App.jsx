@@ -211,6 +211,25 @@ function MainPage({ authUser }) {
     return data;
   }
 
+  async function deleteJson(path, payload) {
+    const res = await fetch(`${API_BASE_URL}${path}`, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const message =
+        data?.error?.message || data?.message || `Request failed: ${res.status}`;
+      throw new Error(message);
+    }
+
+    return data;
+  }
+
   const handleSubscribe = async (item) => {
     if (!userEmail) {
       setSubsError("Please login to manage your subscription.");
@@ -254,7 +273,7 @@ function MainPage({ authUser }) {
     };
 
     try {
-      await postJson("/subscriptions/unsubscribe", payload);
+      await deleteJson("/subscriptions/unsubscribe", payload);
       setLibraryCursorHistory([null]);
       await fetchLibraryPage(null, 0);
     } catch (err) {
