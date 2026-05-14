@@ -6,7 +6,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "load:music": "node load-music-data.js",
-    "s3:upload-images": "node upload-artist-images-to-s3.js"
+    "s3:upload-images": "node upload-artist-images-to-s3.js",
+    "create:music-table": "node create-music-table.js"
   },
   "keywords": [],
   "author": "",
