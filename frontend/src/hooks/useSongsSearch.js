@@ -39,6 +39,7 @@ export function useSongsSearch(apiBaseUrl, pageSize, activeQuery) {
   const [queryResults, setQueryResults] = useState([]);
   const [isLoadingSongs, setIsLoadingSongs] = useState(false);
   const [songsError, setSongsError] = useState("");
+  // Same token-stack idea as useSongsPagination — search pagination is also cursor-based.
   const [cursorHistory, setCursorHistory] = useState([null]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [nextCursor, setNextCursor] = useState(null);
@@ -47,6 +48,7 @@ export function useSongsSearch(apiBaseUrl, pageSize, activeQuery) {
   const [totalPages, setTotalPages] = useState(null);
   const [isTotalApproximate, setIsTotalApproximate] = useState(false);
 
+  // Matches backend rule: at least one field — avoids calling /songs/search with an empty query.
   const enabled = useMemo(() => hasAnyField(activeQuery), [activeQuery]);
 
   const fetchSongsPage = useCallback(

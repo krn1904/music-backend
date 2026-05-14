@@ -16,6 +16,7 @@ export function useSongsPagination(apiBaseUrl, pageSize) {
   const [queryResults, setQueryResults] = useState([]);
   const [isLoadingSongs, setIsLoadingSongs] = useState(false);
   const [songsError, setSongsError] = useState("");
+  // Index i holds the nextToken used to fetch page i (null for first page) so "previous" can re-fetch with the right cursor.
   const [cursorHistory, setCursorHistory] = useState([null]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [nextCursor, setNextCursor] = useState(null);

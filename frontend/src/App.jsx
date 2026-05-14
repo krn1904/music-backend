@@ -8,6 +8,7 @@ import SubscriptionRowCard from "./components/SubscriptionRowCard";
 import { useSongsPagination } from "./hooks/useSongsPagination";
 import { useSongsSearch } from "./hooks/useSongsSearch";
 
+// VITE_API_BASE_URL = Express locally or API Gateway in prod; strip trailing slash so fetch URLs stay clean.
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
 
 const AUTH_USER_KEY = "music_app_auth_user";
@@ -20,6 +21,7 @@ function safeJsonParse(value) {
   }
 }
 
+// Stable key for React lists + subscribe state — API may use Artist/SongTitle or camelCase from other paths.
 function getSongIdentity(item) {
   const artist = String(item?.artist ?? item?.Artist ?? "").trim();
   const title = String(item?.title ?? item?.SongTitle ?? "").trim();
@@ -35,6 +37,7 @@ function getAuthUser() {
   return parsed && typeof parsed === "object" ? parsed : null;
 }
 
+// Hash routes only (no react-router) so static S3/CloudFront hosting still works with #/login etc.
 function getRouteFromHash() {
   const hash = window.location.hash || "#/login";
   const cleaned = hash.startsWith("#") ? hash.slice(1) : hash;
@@ -98,6 +101,7 @@ function MainPage({ authUser }) {
       String(queryForm.album || "").trim()
   );
 
+  // One results grid: browse uses /songs hook, search uses /songs/search — switch which hook feeds the UI.
   const displayedResults = isSearching ? searchResults : queryResults;
   const displayedIsLoading = isSearching ? isLoadingSearch : isLoadingSongs;
   const displayedError = isSearching ? searchError : songsError;
@@ -230,6 +234,7 @@ function MainPage({ authUser }) {
     return data;
   }
 
+  // Subscribe to a song.
   const handleSubscribe = async (item) => {
     if (!userEmail) {
       setSubsError("Please login to manage your subscription.");
@@ -257,6 +262,7 @@ function MainPage({ authUser }) {
     }
   };
 
+  // Unsubscribe from a song.
   const handleRemove = async (itemId) => {
     if (!userEmail) return;
 
@@ -451,12 +457,14 @@ export default function App() {
   const [route, setRoute] = useState(() => getRouteFromHash());
   const [authUser, setAuthUser] = useState(() => getAuthUser());
 
+  // Keep route in sync when user uses back/forward or edits the hash manually.
   useEffect(() => {
     const onHashChange = () => setRoute(getRouteFromHash());
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
+  // Logged-in users shouldn't stay on auth screens — bump them to #/.
   useEffect(() => {
     if (authUser && (route === "/login" || route === "/register")) {
       window.location.hash = "/";
@@ -554,6 +562,7 @@ export default function App() {
         {userArea}
       </header>
 
+      {/* Login on #/login, or on #/ when logged out (&& binds before ||). Register is a separate branch below. */}
       {route === "/login" || !authUser && route === "/" ? (
         <LoginPage
           onLoginSuccess={handleLoginSuccess}
