@@ -1,3 +1,5 @@
+// Download cover URLs from the JSON dataset, upload one object per artist to S3,
+// then point each DynamoDB song row's image_url at that S3 key (for presigned URLs in the app).
 const fs = require('fs');
 const path = require('path');
 const { S3Client, PutObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
@@ -8,6 +10,7 @@ require('dotenv').config({ path: '../.env' });
 const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
 const TABLE_NAME = process.env.DYNAMODB_TABLE || 'music';
 const S3_BUCKET = process.env.S3_BUCKET;
+// Keys land under this prefix so the bucket can hold other stuff later without clashes.
 const S3_PREFIX = (process.env.S3_IMAGE_PREFIX || 'artist-images/').replace(/^\/+/, '');
 const DEFAULT_DATA_FILE = './2026a2_songs.json';
 
@@ -28,6 +31,7 @@ function asTrimmedString(value) {
   return String(value).trim();
 }
 
+// JSON might be a bare array or wrapped — normalize to a list of song objects.
 function getRecords(payload) {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload.songs)) return payload.songs;
@@ -35,6 +39,7 @@ function getRecords(payload) {
   throw new Error('Unsupported JSON format. Expected array, songs[], or items[].');
 }
 
+// Map response Content-Type to a file extension when the remote URL has no useful path suffix.
 function guessExtFromContentType(contentType) {
   const ct = String(contentType || '').toLowerCase();
   if (ct.includes('image/jpeg')) return '.jpg';
@@ -44,6 +49,7 @@ function guessExtFromContentType(contentType) {
   return '';
 }
 
+// Safe filename segment from artist name for the S3 key.
 function slugifyArtistName(artist) {
   return String(artist)
     .normalize('NFKD')
@@ -54,6 +60,7 @@ function slugifyArtistName(artist) {
     .replace(/-+/g, '-');
 }
 
+// One key per artist: prefix + slug + extension from Content-Type or original URL.
 function buildArtistS3Key(artist, contentType, sourceUrl) {
   const slug = slugifyArtistName(artist) || 'unknown-artist';
   const ext = guessExtFromContentType(contentType) || path.extname(new URL(sourceUrl).pathname) || '.img';
@@ -61,6 +68,7 @@ function buildArtistS3Key(artist, contentType, sourceUrl) {
   return `${S3_PREFIX}${slug}${normalizedExt}`;
 }
 
+// Skip re-upload if we already ran this script — saves time and write costs.
 async function headIfExists(s3, bucket, key) {
   try {
     await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
@@ -71,6 +79,7 @@ async function headIfExists(s3, bucket, key) {
   }
 }
 
+// Simple GET of the public image URL — Node 18+ has global fetch.
 async function downloadImage(imageUrl) {
   const res = await fetch(imageUrl);
   if (!res.ok) {
@@ -82,6 +91,7 @@ async function downloadImage(imageUrl) {
 }
 
 async function run() {
+  // Optional: node upload-artist-images-to-s3.js path/to/other.json
   const dataFileArg = process.argv[2];
   const dataFilePath = path.resolve(__dirname, dataFileArg || DEFAULT_DATA_FILE);
   if (!fs.existsSync(dataFilePath)) {
@@ -111,7 +121,7 @@ async function run() {
   });
   const dynamodb = DynamoDBDocumentClient.from(dynamodbClient);
 
-  // Keep one canonical image URL per artist (first non-empty URL wins).
+  // Dedupe by artist: many songs share one image — upload once, reuse the key for every row.
   const artistToSourceUrl = new Map();
   for (const raw of rawRecords) {
     const artist = asTrimmedString(raw.artist);
@@ -124,11 +134,13 @@ async function run() {
 
   console.log(`Found ${artistToSourceUrl.size} artists with a source image URL.`);
 
+  // After uploads, artist -> S3 object key (used in the Dynamo pass below).
   const artistKeyMap = new Map(); // artist -> s3Key
   let uploaded = 0;
   let skippedExisting = 0;
   let failed = 0;
 
+  // Phase 1: fetch remote image bytes and PutObject once per artist.
   for (const [artist, imageUrl] of artistToSourceUrl.entries()) {
     try {
       const { buffer, contentType } = await downloadImage(imageUrl);
@@ -167,6 +179,7 @@ async function run() {
   let skippedSongs = 0;
   let failedSongs = 0;
 
+  // Phase 2: patch each song row — load-music should have created these items already.
   for (const raw of rawRecords) {
     const artist = asTrimmedString(raw.artist);
     const songTitle = asTrimmedString(raw.title);
@@ -191,6 +204,7 @@ async function run() {
           Key: { Artist: artist, SongTitleYear: songTitleYear },
           UpdateExpression: 'SET image_url = :k',
           ExpressionAttributeValues: { ':k': s3Key },
+          // No-op safely if this key combo isn't in the table yet (e.g. data out of sync).
           ConditionExpression:
             'attribute_exists(Artist) AND attribute_exists(SongTitleYear)'
         })

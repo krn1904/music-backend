@@ -1,3 +1,4 @@
+// create the music catalog table + indexes (no data load here).
 const {
   CreateTableCommand,
   DescribeTableCommand,
@@ -40,6 +41,7 @@ async function tableExists(tableName) {
   }
 }
 
+// Exit early if the table is already there — CreateTable would throw ResourceInUseException.
 async function run() {
   const exists = await tableExists(TABLE_NAME);
   if (exists) {
@@ -47,13 +49,11 @@ async function run() {
     return;
   }
 
-  // AttributeDefinitions only declare attributes used as keys (base table or
-  // index). Non-key attributes (SongTitle for display, image_url) are stored
-  // per item without being declared here.
+  // Dynamo only needs key attributes declared here; everything else (SongTitle, image_url, …)
+  // is just stored on each item.
   //
-  // Base table SK is the synthetic SongTitleYear (e.g. "Delicate#2018") so
-  // legitimate re-releases coexist as distinct rows. Plain SongTitle remains
-  // on every item for display, search, and back-compat.
+  // Range key is SongTitleYear (e.g. "Delicate#2018") so two different years don't collide;
+  // SongTitle on the item is still the human-readable title for the UI and search.
   await client.send(
     new CreateTableCommand({
       TableName: TABLE_NAME,
@@ -67,6 +67,7 @@ async function run() {
         { AttributeName: 'Artist', KeyType: 'HASH' },
         { AttributeName: 'SongTitleYear', KeyType: 'RANGE' }
       ],
+      // LSI shares the base table partition (Artist) — cheap queries by album for one artist.
       LocalSecondaryIndexes: [
         {
           IndexName: 'AlbumIndex',
@@ -77,6 +78,7 @@ async function run() {
           Projection: { ProjectionType: 'ALL' }
         }
       ],
+      // GSI uses Year as HASH so /by-year can query without scanning the whole table.
       GlobalSecondaryIndexes: [
         {
           IndexName: 'YearArtistIndex',
@@ -91,6 +93,7 @@ async function run() {
     })
   );
 
+  // Same idea as login script: wait until status is ACTIVE before you load data elsewhere.
   await waitUntilTableExists(
     { client, maxWaitTime: 60 },
     { TableName: TABLE_NAME }

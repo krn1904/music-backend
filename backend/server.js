@@ -156,7 +156,7 @@ app.get('/songs', async (req, res) => {
   }
 });
 
-// Register a new user (plaintext password for assignment simplicity).
+// Register a new user
 app.post('/register', async (req, res) => {
   try {
     const { username, email, password } = req.body || {};
@@ -167,6 +167,7 @@ app.post('/register', async (req, res) => {
 
     const normalizedEmail = String(email).trim().toLowerCase();
     const normalizedUserName = String(username).trim();
+    // password is stored in plain text for assignment simplicity.
     const normalizedPassword = String(password);
     const createdAt = new Date().toISOString();
 
@@ -201,7 +202,7 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// Login user by email + plaintext password (for assignment simplicity).
+// Login user by email + plaintext password.
 app.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body || {};

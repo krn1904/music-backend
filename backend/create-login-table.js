@@ -40,11 +40,13 @@ async function tableExists(tableName) {
     await client.send(new DescribeTableCommand({ TableName: tableName }));
     return true;
   } catch (error) {
+    // Missing table is expected on first run; anything else should surface.
     if (error?.name === 'ResourceNotFoundException') return false;
     throw error;
   }
 }
 
+// predefined users
 function buildSeedUsers() {
   const now = new Date().toISOString();
   return [
@@ -68,6 +70,7 @@ async function createLoginTableIfMissing() {
     return;
   }
 
+  // Single-partition-key table — email is unique per user; matches the login Lambda.
   await client.send(
     new CreateTableCommand({
       TableName: LOGIN_TABLE_NAME,
@@ -77,6 +80,7 @@ async function createLoginTableIfMissing() {
     })
   );
 
+  // CreateTable is async — wait so the following BatchWrite does not race ACTIVE.
   await waitUntilTableExists(
     { client, maxWaitTime: 60 },
     { TableName: LOGIN_TABLE_NAME }
@@ -97,6 +101,7 @@ async function seedLoginUsers(users) {
   );
 }
 
+// Table first (no-op if exists), then upsert seed rows — safe to re-run.
 async function run() {
   const users = buildSeedUsers();
   await createLoginTableIfMissing();
