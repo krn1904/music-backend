@@ -17,12 +17,14 @@ async function handleSongs(event) {
   const qs = event?.queryStringParameters || {};
 
   const requestedLimit = Number.parseInt(qs.limit, 10);
+  // clamp limit so one request can't ask for a ridiculous page size
   const limit = Number.isFinite(requestedLimit)
     ? Math.min(Math.max(requestedLimit, 1), MAX_PAGE_SIZE)
     : DEFAULT_PAGE_SIZE;
 
   let exclusiveStartKey;
   if (qs.nextToken) {
+    // pick up where the last page left off (Dynamo's cursor)
     exclusiveStartKey = decodePageToken(qs.nextToken);
   }
 
@@ -38,6 +40,7 @@ async function handleSongs(event) {
 
   const items = await Promise.all(
     (data.Items || []).map(async (item) => {
+      // presign images so the UI can show them without exposing the bucket
       const { imageKey, imageSignedUrl } = await toSignedImageUrl(item?.image_url);
       return {
         ...item,
@@ -62,6 +65,7 @@ async function handleSearch(event) {
   const qs = event?.queryStringParameters || {};
 
   const requestedLimit = Number.parseInt(qs.limit, 10);
+  // same page-size clamp as the songs list
   const limit = Number.isFinite(requestedLimit)
     ? Math.min(Math.max(requestedLimit, 1), MAX_PAGE_SIZE)
     : DEFAULT_PAGE_SIZE;
@@ -76,6 +80,7 @@ async function handleSearch(event) {
   const normalizedArtist = artist.toLowerCase();
   const normalizedAlbum = album.toLowerCase();
 
+  // need at least one field or we'd just be scanning everything for no reason
   const hasAnyFilter = Boolean(
     normalizedTitle || normalizedYear || normalizedArtist || normalizedAlbum
   );
@@ -89,6 +94,7 @@ async function handleSearch(event) {
 
   let offset = 0;
   if (qs.nextToken) {
+    // search materializes all matches first — token is just an offset into that array
     const decodedToken = decodePageToken(qs.nextToken);
     const parsedOffset = Number.parseInt(decodedToken?.offset, 10);
     if (!Number.isFinite(parsedOffset) || parsedOffset < 0) {
@@ -99,6 +105,7 @@ async function handleSearch(event) {
 
   const matchedItems = [];
   let scanExclusiveStartKey;
+  // walk the whole table in chunks — simple search, not great at massive scale
   do {
     const page = await dynamodb.send(
       new ScanCommand({
@@ -108,6 +115,7 @@ async function handleSearch(event) {
     );
 
     if (Array.isArray(page.Items) && page.Items.length > 0) {
+      // loose "contains" checks — good enough for the assignment dataset
       const filteredItems = page.Items.filter((item) => {
         const itemTitle = String(item?.SongTitle || '').toLowerCase();
         const itemYear = String(item?.Year || '').toLowerCase();
@@ -128,6 +136,7 @@ async function handleSearch(event) {
   } while (scanExclusiveStartKey);
 
   const totalSongs = matchedItems.length;
+  // slice the in-memory matches for "page 2" etc. (token stores offset)
   const pagedItems = matchedItems.slice(offset, offset + limit);
   const nextOffset = offset + limit;
   const nextToken =
@@ -137,6 +146,7 @@ async function handleSearch(event) {
 
   const items = await Promise.all(
     pagedItems.map(async (item) => {
+      // same image handling as browse — key in json, signed url for <img src>
       const { imageKey, imageSignedUrl } = await toSignedImageUrl(item?.image_url);
       return {
         ...item,
@@ -164,6 +174,7 @@ async function handleStats(event) {
   const qs = event?.queryStringParameters || {};
 
   const requestedLimit = Number.parseInt(qs.pageSize, 10);
+  // stats endpoint still respects the shared max so someone can't DOS with a weird pageSize
   const pageSize = Number.isFinite(requestedLimit)
     ? Math.min(Math.max(requestedLimit, 1), MAX_PAGE_SIZE)
     : DEFAULT_PAGE_SIZE;
@@ -171,6 +182,7 @@ async function handleStats(event) {
   let totalSongs = 0;
   let exclusiveStartKey;
 
+  // COUNT scans are lighter — we only need how many rows exist, not the data
   do {
     const countPage = await dynamodb.send(
       new ScanCommand({
@@ -207,6 +219,7 @@ async function handleByAlbum(event) {
     return sendError(400, 'Missing required query params: artist and album');
   }
 
+  // GSI lookup — way faster than scanning when you know artist + album
   const data = await dynamodb.send(
     new QueryCommand({
       TableName: TABLE_NAME,
@@ -254,6 +267,7 @@ async function handleByYear(event) {
   let KeyConditionExpression = '#y = :year';
 
   if (artist) {
+    // optional filter — begins_with so partial artist strings still work
     ExpressionAttributeNames['#a'] = 'Artist';
     ExpressionAttributeValues[':artist'] = artist;
     KeyConditionExpression += ' AND begins_with(#a, :artist)';
@@ -297,6 +311,7 @@ exports.handler = async (event) => {
       return buildResponse(200, { success: true });
     }
 
+    // same lambda, different paths — API Gateway just forwards the route
     const path = getPath(event);
 
     if (path === '/songs') return await handleSongs(event);

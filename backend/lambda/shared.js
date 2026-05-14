@@ -10,7 +10,7 @@ const {
   DeleteCommand
 } = require('@aws-sdk/lib-dynamodb');
 
-// Optional for local invocation; in AWS Lambda set env vars in configuration.
+// load root .env when I run handlers locally — in AWS the lambda env/config wins
 require('dotenv').config({ path: '../../.env' });
 
 const TABLE_NAME = process.env.DYNAMODB_TABLE || 'music';
@@ -23,11 +23,12 @@ const S3_BUCKET = process.env.S3_BUCKET || '';
 const IMAGE_URL_TTL_SECONDS = Number.parseInt(
   process.env.S3_SIGNED_URL_TTL_SECONDS || '900',
   10
-);
+); // presigned cover art links expire after this many seconds
 
 const DEFAULT_PAGE_SIZE = 12;
 const MAX_PAGE_SIZE = 50;
 
+// standard API Gateway-ish response the frontend can read + loose CORS for the SPA
 function buildResponse(statusCode, payload, extraHeaders) {
   return {
     statusCode,
@@ -42,6 +43,7 @@ function buildResponse(statusCode, payload, extraHeaders) {
   };
 }
 
+// same envelope every time the UI needs to show an error toast
 function sendError(statusCode, message, details) {
   return buildResponse(statusCode, {
     success: false,
@@ -55,6 +57,7 @@ function sendError(statusCode, message, details) {
 function parseJsonBody(event) {
   if (!event?.body) return {};
   try {
+    // REST API can base64 the body — decode before JSON.parse
     const raw = event.isBase64Encoded
       ? Buffer.from(event.body, 'base64').toString('utf-8')
       : event.body;
@@ -64,10 +67,12 @@ function parseJsonBody(event) {
   }
 }
 
+// tiny helper so we don't try to "sign" strings that are already normal URLs
 function looksLikeHttpUrl(value) {
   return typeof value === 'string' && /^https?:\/\//i.test(value);
 }
 
+// lambda uses the execution role — no keys hardcoded in here
 const dynamodbClient = new DynamoDBClient({
   region: AWS_REGION
 });
@@ -81,14 +86,17 @@ async function toSignedImageUrl(imageUrlOrKey) {
   const raw = typeof imageUrlOrKey === 'string' ? imageUrlOrKey.trim() : '';
   if (!raw) return { imageKey: '', imageSignedUrl: '' };
 
+  // already hosted somewhere — just pass it through
   if (looksLikeHttpUrl(raw)) {
     return { imageKey: '', imageSignedUrl: raw };
   }
 
+  // local/dev without bucket — return the raw key so I can still see what broke
   if (!S3_BUCKET) {
     return { imageKey: raw, imageSignedUrl: '' };
   }
 
+  // don't hand out multi-hour URLs by accident
   const safeTtl =
     Number.isFinite(IMAGE_URL_TTL_SECONDS) && IMAGE_URL_TTL_SECONDS > 0
       ? Math.min(Math.max(IMAGE_URL_TTL_SECONDS, 60), 3600)
@@ -103,6 +111,7 @@ async function toSignedImageUrl(imageUrlOrKey) {
   return { imageKey: raw, imageSignedUrl: signedUrl };
 }
 
+// nextToken the client sends back — was json then base64
 function decodePageToken(token) {
   try {
     return JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
@@ -111,6 +120,7 @@ function decodePageToken(token) {
   }
 }
 
+// dynamo LastEvaluatedKey or our own { offset: n } — either way it round-trips opaque
 function encodePageToken(lastEvaluatedKey) {
   if (!lastEvaluatedKey) return null;
   return Buffer.from(JSON.stringify(lastEvaluatedKey), 'utf-8').toString(
@@ -118,6 +128,7 @@ function encodePageToken(lastEvaluatedKey) {
   );
 }
 
+// one string that uniquely names a track for the subscription sort key
 function buildSongKey(artist, songTitle, year) {
   return `${String(artist).trim()}#${String(songTitle).trim()}#${String(
     year || ''
@@ -126,7 +137,7 @@ function buildSongKey(artist, songTitle, year) {
 
 function getPath(event) {
   const raw = String(event?.path || event?.rawPath || '').trim();
-  // REST API proxy sometimes includes the stage in the path (e.g. /prod/songs)
+  // strip the /prod stage prefix API Gateway sometimes leaves on the path
   const parts = raw.split('/').filter(Boolean);
   if (parts.length > 0 && parts[0] === 'prod') {
     return '/' + parts.slice(1).join('/');

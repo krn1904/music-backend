@@ -6,6 +6,7 @@ const esbuild = require('esbuild');
 const LAMBDA_DIR = path.resolve(__dirname, '..');
 const OUT_DIR = path.resolve(LAMBDA_DIR, '..', 'dist-lambda');
 
+// each entry here becomes one zip I can upload straight to the matching lambda
 const artifacts = [
   { name: 'music-login', entry: 'login.js' },
   { name: 'music-register', entry: 'register.js' },
@@ -19,6 +20,7 @@ function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
 }
 
+// bundle + zip one handler — keeps each artifact small without vendoring all of node_modules
 function zipOne({ name, entry }) {
   return new Promise((resolve, reject) => {
     const zipPath = path.join(OUT_DIR, `${name}.zip`);
@@ -36,8 +38,7 @@ function zipOne({ name, entry }) {
 
     archive.pipe(output);
 
-    // Bundle each handler (and its deps) into a single file to keep zips small
-    // and avoid archiving huge node_modules trees in synced folders.
+    // bundle deps into a single file so the zip isn't a bloated node_modules dump
     const bundledOut = path.join(OUT_DIR, entry);
     try {
       esbuild.buildSync({
@@ -66,6 +67,7 @@ async function main() {
 
   const results = [];
   for (const a of artifacts) {
+    // serial is fine here — six tiny bundles and easier to read if something blows up
     // eslint-disable-next-line no-await-in-loop
     const r = await zipOne(a);
     results.push(r);

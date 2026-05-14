@@ -11,6 +11,7 @@ const {
 exports.handler = async (event) => {
   try {
     if (event?.httpMethod === 'OPTIONS') {
+      // cors preflight — nothing to save yet
       return buildResponse(200, { success: true });
     }
 
@@ -35,6 +36,7 @@ exports.handler = async (event) => {
     const normalizedArtist = String(artist).trim();
     const normalizedYear = String(year).trim();
 
+    // same string every time for this track — lines up with unsubscribe + keeps rows unique
     const songKey = buildSongKey(normalizedArtist, normalizedSongTitle, normalizedYear);
 
     await dynamodb.send(
@@ -50,6 +52,7 @@ exports.handler = async (event) => {
           image_url: image_url != null ? String(image_url) : '',
           SubscribedAt: new Date().toISOString()
         },
+        // if this user+song combo is already there, dynamo rejects it — we map that to 409 below
         ConditionExpression: 'attribute_not_exists(SongKey)'
       })
     );
@@ -57,6 +60,7 @@ exports.handler = async (event) => {
     return buildResponse(201, { success: true });
   } catch (error) {
     if (error?.name === 'ConditionalCheckFailedException') {
+      // duplicate subscription row for this user
       return sendError(409, 'Already subscribed', 'Subscription already exists');
     }
     console.error('music-subscribe failed:', error);

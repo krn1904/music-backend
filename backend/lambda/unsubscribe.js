@@ -11,10 +11,11 @@ const {
 exports.handler = async (event) => {
   try {
     if (event?.httpMethod === 'OPTIONS') {
+      // same cors deal as the other lambdas
       return buildResponse(200, { success: true });
     }
 
-    const { userEmail, artist, songTitle, year } = parseJsonBody(event);
+    const { userEmail, artist, songTitle, year } = parseJsonBody(event); // mirror subscribe payload
 
     if (
       !userEmail ||
@@ -30,6 +31,7 @@ exports.handler = async (event) => {
     }
 
     const normalizedUserEmail = String(userEmail).trim().toLowerCase();
+    // has to match the key we used on subscribe (buildSongKey trims internally)
     const songKey = buildSongKey(artist, songTitle, year);
 
     await dynamodb.send(
@@ -39,6 +41,7 @@ exports.handler = async (event) => {
       })
     );
 
+    // if the row wasn't there, delete still "succeeds" from the user's point of view
     return buildResponse(200, { success: true });
   } catch (error) {
     console.error('music-unsubscribe failed:', error);

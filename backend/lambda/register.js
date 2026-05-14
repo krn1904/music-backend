@@ -10,6 +10,7 @@ const {
 exports.handler = async (event) => {
   try {
     if (event?.httpMethod === 'OPTIONS') {
+      // browsers send this before the real request when the site is on another domain
       return buildResponse(200, { success: true });
     }
 
@@ -22,7 +23,7 @@ exports.handler = async (event) => {
     const normalizedEmail = String(email).trim().toLowerCase();
     const normalizedUserName = String(username).trim();
     const normalizedPassword = String(password);
-    const createdAt = new Date().toISOString();
+    const createdAt = new Date().toISOString(); // just so we know when the account showed up
 
     if (!normalizedEmail.includes('@')) {
       return sendError(400, 'Please enter a valid email address.');
@@ -37,6 +38,7 @@ exports.handler = async (event) => {
           Password: normalizedPassword,
           CreatedAt: createdAt
         },
+        // bail if that email row already exists — stops silent overwrites
         ConditionExpression: 'attribute_not_exists(Email)'
       })
     );
@@ -47,6 +49,7 @@ exports.handler = async (event) => {
     });
   } catch (error) {
     if (error?.name === 'ConditionalCheckFailedException') {
+      // dynamo throws this when the email key was already there
       return sendError(409, 'The email already exists', error.name);
     }
     console.error('music-register failed:', error);

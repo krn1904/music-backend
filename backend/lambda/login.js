@@ -10,6 +10,7 @@ const {
 exports.handler = async (event) => {
   try {
     if (event?.httpMethod === 'OPTIONS') {
+      // browsers hit this before the real POST when frontend is on another origin
       return buildResponse(200, { success: true });
     }
 
@@ -22,6 +23,7 @@ exports.handler = async (event) => {
     const normalizedEmail = String(email).trim().toLowerCase();
     const normalizedPassword = String(password);
 
+    // one row per email — Get is enough, no scan needed
     const data = await dynamodb.send(
       new GetCommand({
         TableName: LOGIN_TABLE_NAME,
@@ -31,6 +33,7 @@ exports.handler = async (event) => {
 
     const item = data?.Item;
     if (!item || item.Password !== normalizedPassword) {
+      // same message either way so you can't probe which emails exist
       return sendError(401, 'email or password is invalid');
     }
 
