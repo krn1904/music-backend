@@ -582,15 +582,29 @@ app.get('/songs/by-album', async (req, res) => {
       return sendError(res, 400, 'Missing required query params: artist and album');
     }
 
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(requestedLimit, 1), MAX_PAGE_SIZE)
+      : DEFAULT_PAGE_SIZE;
+
+    let exclusiveStartKey;
+    if (req.query.nextToken) {
+      exclusiveStartKey = decodePageToken(req.query.nextToken);
+    }
+
     const data = await dynamodb.send(
       new QueryCommand({
         TableName: TABLE_NAME,
         IndexName: 'AlbumIndex',
         KeyConditionExpression: '#a = :artist AND #al = :album',
         ExpressionAttributeNames: { '#a': 'Artist', '#al': 'Album' },
-        ExpressionAttributeValues: { ':artist': artist, ':album': album }
+        ExpressionAttributeValues: { ':artist': artist, ':album': album },
+        Limit: limit,
+        ExclusiveStartKey: exclusiveStartKey
       })
     );
+
+    const nextToken = encodePageToken(data.LastEvaluatedKey);
 
     const items = await Promise.all(
       (data.Items || []).map(async (item) => {
@@ -606,10 +620,15 @@ app.get('/songs/by-album', async (req, res) => {
     return res.json({
       success: true,
       items,
+      pagination: {
+        limit,
+        totalSongs: items.length,
+        nextToken,
+        isTotalApproximate: Boolean(nextToken)
+      },
       meta: {
         index: 'AlbumIndex',
-        operation: 'Query',
-        count: items.length
+        operation: 'Query'
       }
     });
   } catch (error) {
@@ -631,6 +650,16 @@ app.get('/songs/by-year', async (req, res) => {
       return sendError(res, 400, 'Missing required query param: year');
     }
 
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(requestedLimit, 1), MAX_PAGE_SIZE)
+      : DEFAULT_PAGE_SIZE;
+
+    let exclusiveStartKey;
+    if (req.query.nextToken) {
+      exclusiveStartKey = decodePageToken(req.query.nextToken);
+    }
+
     const ExpressionAttributeNames = { '#y': 'Year' };
     const ExpressionAttributeValues = { ':year': year };
     let KeyConditionExpression = '#y = :year';
@@ -647,9 +676,13 @@ app.get('/songs/by-year', async (req, res) => {
         IndexName: 'YearArtistIndex',
         KeyConditionExpression,
         ExpressionAttributeNames,
-        ExpressionAttributeValues
+        ExpressionAttributeValues,
+        Limit: limit,
+        ExclusiveStartKey: exclusiveStartKey
       })
     );
+
+    const nextToken = encodePageToken(data.LastEvaluatedKey);
 
     const items = await Promise.all(
       (data.Items || []).map(async (item) => {
@@ -665,10 +698,15 @@ app.get('/songs/by-year', async (req, res) => {
     return res.json({
       success: true,
       items,
+      pagination: {
+        limit,
+        totalSongs: items.length,
+        nextToken,
+        isTotalApproximate: Boolean(nextToken)
+      },
       meta: {
         index: 'YearArtistIndex',
-        operation: 'Query',
-        count: items.length
+        operation: 'Query'
       }
     });
   } catch (error) {

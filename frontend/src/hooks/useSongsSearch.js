@@ -35,6 +35,32 @@ function buildSearchParams(activeQuery, limit, nextToken) {
   return params;
 }
 
+// Picks the most efficient DynamoDB operation for the given field combination.
+// Artist+Album only  → Query via LSI  (AlbumIndex)
+// Year (±Artist)     → Query via GSI  (YearArtistIndex)
+// Everything else    → Scan  (/songs/search)
+function buildFetchUrl(apiBaseUrl, activeQuery, limit, nextToken) {
+  const artist = String(activeQuery?.artist || "").trim();
+  const album  = String(activeQuery?.album  || "").trim();
+  const year   = String(activeQuery?.year   || "").trim();
+  const title  = String(activeQuery?.title  || "").trim();
+
+  if (artist && album && !year && !title) {
+    const params = new URLSearchParams({ artist, album, limit: String(limit) });
+    if (nextToken) params.set("nextToken", nextToken);
+    return `${apiBaseUrl}/songs/by-album?${params}`;
+  }
+
+  if (year && !album && !title) {
+    const params = new URLSearchParams({ year, limit: String(limit) });
+    if (artist) params.set("artist", artist);
+    if (nextToken) params.set("nextToken", nextToken);
+    return `${apiBaseUrl}/songs/by-year?${params}`;
+  }
+
+  return `${apiBaseUrl}/songs/search?${buildSearchParams(activeQuery, limit, nextToken)}`;
+}
+
 export function useSongsSearch(apiBaseUrl, pageSize, activeQuery) {
   const [queryResults, setQueryResults] = useState([]);
   const [isLoadingSongs, setIsLoadingSongs] = useState(false);
@@ -44,10 +70,6 @@ export function useSongsSearch(apiBaseUrl, pageSize, activeQuery) {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [nextCursor, setNextCursor] = useState(null);
 
-  const [totalSongs, setTotalSongs] = useState(null);
-  const [totalPages, setTotalPages] = useState(null);
-  const [isTotalApproximate, setIsTotalApproximate] = useState(false);
-
   // Matches backend rule: at least one field — avoids calling /songs/search with an empty query.
   const enabled = useMemo(() => hasAnyField(activeQuery), [activeQuery]);
 
@@ -56,29 +78,22 @@ export function useSongsSearch(apiBaseUrl, pageSize, activeQuery) {
       setIsLoadingSongs(true);
       setSongsError("");
       try {
-        const params = buildSearchParams(activeQuery || {}, size, cursorToken);
-        const response = await fetch(`${apiBaseUrl}/songs/search?${params.toString()}`);
+        const url = buildFetchUrl(apiBaseUrl, activeQuery, size, cursorToken);
+        const response = await fetch(url);
         if (!response.ok) {
           throw new Error(`Request failed: ${response.status}`);
         }
         const payload = await response.json();
         const songs = (payload.items || []).map(mapSongItem);
         setQueryResults(songs);
-        setNextCursor(payload.pagination?.nextToken || null);
-        setTotalSongs(
-          Number.isFinite(payload.pagination?.totalSongs) ? payload.pagination.totalSongs : null
+
+        setNextCursor(
+          payload.pagination?.nextToken || null
         );
-        setTotalPages(
-          Number.isFinite(payload.pagination?.totalPages) ? payload.pagination.totalPages : null
-        );
-        setIsTotalApproximate(Boolean(payload.pagination?.isTotalApproximate));
       } catch (error) {
         setSongsError(error?.message || "Failed to load search results");
         setQueryResults([]);
         setNextCursor(null);
-        setTotalSongs(null);
-        setTotalPages(null);
-        setIsTotalApproximate(false);
       } finally {
         setIsLoadingSongs(false);
       }
@@ -92,9 +107,6 @@ export function useSongsSearch(apiBaseUrl, pageSize, activeQuery) {
     setCursorHistory([null]);
     setCurrentPageIndex(0);
     setNextCursor(null);
-    setTotalSongs(null);
-    setTotalPages(null);
-    setIsTotalApproximate(false);
 
     fetchSongsPage(null, pageSize);
   }, [enabled, fetchSongsPage, pageSize]);
@@ -122,9 +134,6 @@ export function useSongsSearch(apiBaseUrl, pageSize, activeQuery) {
       songsError,
       currentPageIndex,
       hasNextPage: Boolean(nextCursor),
-      totalSongs,
-      totalPages,
-      isTotalApproximate,
       handleNextPage,
       handlePreviousPage
     }),
@@ -134,12 +143,8 @@ export function useSongsSearch(apiBaseUrl, pageSize, activeQuery) {
       songsError,
       currentPageIndex,
       nextCursor,
-      totalSongs,
-      totalPages,
-      isTotalApproximate,
       handleNextPage,
       handlePreviousPage
     ]
   );
 }
-

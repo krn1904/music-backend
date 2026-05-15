@@ -219,16 +219,30 @@ async function handleByAlbum(event) {
     return sendError(400, 'Missing required query params: artist and album');
   }
 
-  // GSI lookup — way faster than scanning when you know artist + album
+  const requestedLimit = Number.parseInt(qs.limit, 10);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(Math.max(requestedLimit, 1), MAX_PAGE_SIZE)
+    : DEFAULT_PAGE_SIZE;
+
+  let exclusiveStartKey;
+  if (qs.nextToken) {
+    exclusiveStartKey = decodePageToken(qs.nextToken);
+  }
+
+  // LSI lookup — way faster than scanning when you know artist + album
   const data = await dynamodb.send(
     new QueryCommand({
       TableName: TABLE_NAME,
       IndexName: 'AlbumIndex',
       KeyConditionExpression: '#a = :artist AND #al = :album',
       ExpressionAttributeNames: { '#a': 'Artist', '#al': 'Album' },
-      ExpressionAttributeValues: { ':artist': artist, ':album': album }
+      ExpressionAttributeValues: { ':artist': artist, ':album': album },
+      Limit: limit,
+      ExclusiveStartKey: exclusiveStartKey
     })
   );
+
+  const nextToken = encodePageToken(data.LastEvaluatedKey);
 
   const items = await Promise.all(
     (data.Items || []).map(async (item) => {
@@ -244,10 +258,15 @@ async function handleByAlbum(event) {
   return buildResponse(200, {
     success: true,
     items,
+    pagination: {
+      limit,
+      totalSongs: items.length,
+      nextToken,
+      isTotalApproximate: Boolean(nextToken)
+    },
     meta: {
       index: 'AlbumIndex',
-      operation: 'Query',
-      count: items.length
+      operation: 'Query'
     }
   });
 }
@@ -260,6 +279,16 @@ async function handleByYear(event) {
 
   if (!year) {
     return sendError(400, 'Missing required query param: year');
+  }
+
+  const requestedLimit = Number.parseInt(qs.limit, 10);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(Math.max(requestedLimit, 1), MAX_PAGE_SIZE)
+    : DEFAULT_PAGE_SIZE;
+
+  let exclusiveStartKey;
+  if (qs.nextToken) {
+    exclusiveStartKey = decodePageToken(qs.nextToken);
   }
 
   const ExpressionAttributeNames = { '#y': 'Year' };
@@ -279,9 +308,13 @@ async function handleByYear(event) {
       IndexName: 'YearArtistIndex',
       KeyConditionExpression,
       ExpressionAttributeNames,
-      ExpressionAttributeValues
+      ExpressionAttributeValues,
+      Limit: limit,
+      ExclusiveStartKey: exclusiveStartKey
     })
   );
+
+  const nextToken = encodePageToken(data.LastEvaluatedKey);
 
   const items = await Promise.all(
     (data.Items || []).map(async (item) => {
@@ -297,10 +330,15 @@ async function handleByYear(event) {
   return buildResponse(200, {
     success: true,
     items,
+    pagination: {
+      limit,
+      totalSongs: items.length,
+      nextToken,
+      isTotalApproximate: Boolean(nextToken)
+    },
     meta: {
       index: 'YearArtistIndex',
-      operation: 'Query',
-      count: items.length
+      operation: 'Query'
     }
   });
 }

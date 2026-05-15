@@ -55,8 +55,6 @@ function MainPage({ authUser }) {
   const [libraryPageIndex, setLibraryPageIndex] = useState(0);
   const [libraryNextCursor, setLibraryNextCursor] = useState(null);
   const [libraryCursorHistory, setLibraryCursorHistory] = useState([null]);
-  const [libraryTotalSongs, setLibraryTotalSongs] = useState(null);
-  const [libraryTotalPages, setLibraryTotalPages] = useState(null);
   const [pageSize, setPageSize] = useState(10);
   const [queryForm, setQueryForm] = useState({
     title: "",
@@ -71,9 +69,6 @@ function MainPage({ authUser }) {
     songsError,
     currentPageIndex,
     hasNextPage,
-    totalSongs,
-    totalPages,
-    isTotalApproximate,
     handleNextPage,
     handlePreviousPage
   } = useSongsPagination(API_BASE_URL, pageSize);
@@ -84,9 +79,6 @@ function MainPage({ authUser }) {
     songsError: searchError,
     currentPageIndex: searchCurrentPageIndex,
     hasNextPage: searchHasNextPage,
-    totalSongs: searchTotalSongs,
-    totalPages: searchTotalPages,
-    isTotalApproximate: searchIsTotalApproximate,
     handleNextPage: handleSearchNextPage,
     handlePreviousPage: handleSearchPreviousPage
   } = useSongsSearch(API_BASE_URL, pageSize, activeQuery);
@@ -107,11 +99,6 @@ function MainPage({ authUser }) {
   const displayedError = isSearching ? searchError : songsError;
   const displayedCurrentPageIndex = isSearching ? searchCurrentPageIndex : currentPageIndex;
   const displayedHasNextPage = isSearching ? searchHasNextPage : hasNextPage;
-  const displayedTotalSongs = isSearching ? searchTotalSongs : totalSongs;
-  const displayedTotalPages = isSearching ? searchTotalPages : totalPages;
-  const displayedIsTotalApproximate = isSearching
-    ? searchIsTotalApproximate
-    : isTotalApproximate;
   const displayedHandlePrevious = isSearching
     ? handleSearchPreviousPage
     : handlePreviousPage;
@@ -148,18 +135,10 @@ function MainPage({ authUser }) {
         setLibraryItems(payload?.items || []);
         setLibraryPageIndex(pageIndex);
         setLibraryNextCursor(payload?.pagination?.nextToken || null);
-        setLibraryTotalSongs(
-          Number.isFinite(payload?.pagination?.totalSongs) ? payload.pagination.totalSongs : null
-        );
-        setLibraryTotalPages(
-          Number.isFinite(payload?.pagination?.totalPages) ? payload.pagination.totalPages : null
-        );
       } catch (err) {
         setSubsError(err?.message || "Failed to load subscriptions");
         setLibraryItems([]);
         setLibraryNextCursor(null);
-        setLibraryTotalSongs(null);
-        setLibraryTotalPages(null);
       } finally {
         setIsLoadingLibrary(false);
       }
@@ -404,9 +383,6 @@ function MainPage({ authUser }) {
                 currentPageIndex={libraryPageIndex}
                 isLoading={isLoadingLibrary}
                 hasNextPage={Boolean(libraryNextCursor)}
-                totalSongs={libraryTotalSongs}
-                totalPages={libraryTotalPages}
-                isTotalApproximate={false}
                 onPrevious={handleLibraryPreviousPage}
                 onNext={handleLibraryNextPage}
               />
@@ -442,9 +418,6 @@ function MainPage({ authUser }) {
           currentPageIndex={displayedCurrentPageIndex}
           isLoading={displayedIsLoading}
           hasNextPage={displayedHasNextPage}
-          totalSongs={displayedTotalSongs}
-          totalPages={displayedTotalPages}
-          isTotalApproximate={displayedIsTotalApproximate}
           onPrevious={displayedHandlePrevious}
           onNext={displayedHandleNext}
         />

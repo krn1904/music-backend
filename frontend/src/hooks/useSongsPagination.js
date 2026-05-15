@@ -20,27 +20,6 @@ export function useSongsPagination(apiBaseUrl, pageSize) {
   const [cursorHistory, setCursorHistory] = useState([null]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [nextCursor, setNextCursor] = useState(null);
-  const [totalSongs, setTotalSongs] = useState(null);
-  const [totalPages, setTotalPages] = useState(null);
-  const [isTotalApproximate, setIsTotalApproximate] = useState(false);
-
-  const fetchSongStats = useCallback(async () => {
-    try {
-      const params = new URLSearchParams({ pageSize: String(pageSize) });
-      const response = await fetch(`${apiBaseUrl}/songs/stats?${params.toString()}`);
-      if (!response.ok) {
-        throw new Error(`Stats request failed: ${response.status}`);
-      }
-      const payload = await response.json();
-      setTotalSongs(payload.stats?.totalSongs ?? null);
-      setTotalPages(payload.stats?.totalPages ?? null);
-      setIsTotalApproximate(Boolean(payload.stats?.isApproximate));
-    } catch {
-      setTotalSongs(null);
-      setTotalPages(null);
-      setIsTotalApproximate(false);
-    }
-  }, [apiBaseUrl, pageSize]);
 
   const fetchSongsPage = useCallback(
     async (cursorToken, size) => {
@@ -76,8 +55,7 @@ export function useSongsPagination(apiBaseUrl, pageSize) {
     setCursorHistory([null]);
     setCurrentPageIndex(0);
     fetchSongsPage(null, pageSize);
-    fetchSongStats();
-  }, [fetchSongStats, fetchSongsPage, pageSize]);
+  }, [fetchSongsPage, pageSize]);
 
   const handleNextPage = useCallback(async () => {
     if (!nextCursor || isLoadingSongs) return;
@@ -102,9 +80,6 @@ export function useSongsPagination(apiBaseUrl, pageSize) {
       songsError,
       currentPageIndex,
       hasNextPage: Boolean(nextCursor),
-      totalSongs,
-      totalPages,
-      isTotalApproximate,
       handleNextPage,
       handlePreviousPage
     }),
@@ -113,12 +88,9 @@ export function useSongsPagination(apiBaseUrl, pageSize) {
       handleNextPage,
       handlePreviousPage,
       isLoadingSongs,
-      isTotalApproximate,
       nextCursor,
       queryResults,
-      songsError,
-      totalPages,
-      totalSongs
+      songsError
     ]
   );
 }
