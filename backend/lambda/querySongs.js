@@ -291,24 +291,16 @@ async function handleByYear(event) {
     exclusiveStartKey = decodePageToken(qs.nextToken);
   }
 
-  const ExpressionAttributeNames = { '#y': 'Year' };
-  const ExpressionAttributeValues = { ':year': year };
-  let KeyConditionExpression = '#y = :year';
-
-  if (artist) {
-    // optional filter — begins_with so partial artist strings still work
-    ExpressionAttributeNames['#a'] = 'Artist';
-    ExpressionAttributeValues[':artist'] = artist;
-    KeyConditionExpression += ' AND begins_with(#a, :artist)';
-  }
-
+  // Query DynamoDB by year only — artist filtering is done in JS below so
+  // partial and case-insensitive artist searches work (DynamoDB begins_with
+  // is case-sensitive and doesn't support partial matching).
   const data = await dynamodb.send(
     new QueryCommand({
       TableName: TABLE_NAME,
       IndexName: 'YearArtistIndex',
-      KeyConditionExpression,
-      ExpressionAttributeNames,
-      ExpressionAttributeValues,
+      KeyConditionExpression: '#y = :year',
+      ExpressionAttributeNames: { '#y': 'Year' },
+      ExpressionAttributeValues: { ':year': year },
       Limit: limit,
       ExclusiveStartKey: exclusiveStartKey
     })
@@ -316,7 +308,9 @@ async function handleByYear(event) {
 
   const nextToken = encodePageToken(data.LastEvaluatedKey);
 
-  const items = await Promise.all(
+  const normalizedArtist = artist.toLowerCase();
+
+  const allItems = await Promise.all(
     (data.Items || []).map(async (item) => {
       const { imageKey, imageSignedUrl } = await toSignedImageUrl(item?.image_url);
       return {
@@ -326,6 +320,13 @@ async function handleByYear(event) {
       };
     })
   );
+
+  // Case-insensitive partial match on artist — "tay" matches "Taylor Swift"
+  const items = artist
+    ? allItems.filter((item) =>
+        String(item.Artist || '').toLowerCase().includes(normalizedArtist)
+      )
+    : allItems;
 
   return buildResponse(200, {
     success: true,
